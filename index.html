@@ -1011,14 +1011,7 @@ window.CURRENT_ROLE = 'member';
 _supabase.auth.onAuthStateChange(async (event,session)=>{
   if(session&&session.user){
     const user=session.user;
-
-    // 登録直後はprofilesがまだ保存中の場合があるのでリトライする
-    let profile = null;
-    for(let i=0; i<5; i++){
-      const {data} = await _supabase.from('profiles').select('*').eq('id',user.id).single();
-      if(data){ profile=data; break; }
-      await new Promise(r=>setTimeout(r,500)); // 0.5秒待ってリトライ
-    }
+    const {data:profile}=await _supabase.from('profiles').select('*').eq('id',user.id).single();
     const role = profile?.role || 'member';
     const name = profile?.name || user.email;
     const year = profile?.year || '';
@@ -1042,6 +1035,398 @@ _supabase.auth.onAuthStateChange(async (event,session)=>{
     const nameEl  =document.querySelector('#page-member .main > div:first-child div:nth-child(2) div:first-child');
     const subEl   =document.querySelector('#page-member .main > div:first-child div:nth-child(2) div:last-child');
     if(avatarEl && name) avatarEl.textContent=name[0];
+    if(nameEl) nameEl.textContent=name;
+    if(subEl)  subEl.textContent=`${year||'?'}年生 ・ ${role==='reviewer'?'確認者':'部員'}`;
+
+    initProgress();
+    updateCountdown();
+    setInterval(updateCountdown,60000);
+
+    if(role==='reviewer') showPage('reviewer');
+    else { renderDomainList(); showPage('member'); }
+
+    await loadFromDB();
+    renderDomainList();
+    updateProgressBar();
+    if(role==='reviewer') renderMemberList();
+  } else {
+    document.getElementById('auth-screen').classList.add('active');
+  }
+});
+
+function switchSubject(domainId,si){
+  activeSubject[domainId]=si;
+  [0,1,2].forEach(i=>{
+    document.getElementById(`spanel-${domainId}-${i}`).classList.toggle("active",i===si);
+  });
+  updateDomainMeta(domainId);
+}
+function selectSeminar(domainId,idx){
+  PROGRESS[window.CURRENT_UID][domainId].seminarSelected=idx;
+  DOMAINS.find(d=>d.id===domainId).seminarDates.forEach((_,i)=>{
+    const btn=document.getElementById(`sb-${domainId}-${i}`);
+    if(btn) btn.className=`sem-btn ${i===idx?"selected":""}`;
+  });
+  updateDomainMeta(domainId);
+}
+function updateSubjectName(domainId,si,val){
+  PROGRESS[window.CURRENT_UID][domainId].subjects[si].name=val;
+  updateDomainMeta(domainId);
+}
+function handleUpload(domainId,si,viewId,input){
+  const file=input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const url=e.target.result;
+    const vs=PROGRESS[window.CURRENT_UID][domainId].subjects[si].views[viewId];
+    vs.fileDataUrl=url; vs.status="pending"; vs.feedback="判定待ちです。担当者が確認します。";
+    const prev=document.getElementById(`prev-${domainId}-${si}-${viewId}`);
+    const ph=document.getElementById(`ph-${domainId}-${si}-${viewId}`);
+    if(prev){prev.src=url;prev.style.display="block";}
+    if(ph) ph.style.display="none";
+    refreshImageStatus(domainId,si,viewId);
+    updateDomainMeta(domainId);
+  };
+  reader.readAsDataURL(file);
+}
+function refreshImageStatus(domainId,si,viewId){
+  const vs=PROGRESS[window.CURRENT_UID][domainId].subjects[si].views[viewId];
+  const stEl=document.getElementById(`st-${domainId}-${si}-${viewId}`);
+  const fbEl=document.getElementById(`fb-${domainId}-${si}-${viewId}`);
+  if(stEl){stEl.className=SC[vs.status];stEl.textContent=SL[vs.status];}
+  if(fbEl){
+    fbEl.textContent=vs.feedback||"（フィードバックなし）";
+    fbEl.className="feedback"+(vs.status==="pass"?" pa":vs.status==="keep"?" ke":"");
+  }
+}
+
+// ================================================================
+// REF POPUP
+// ================================================================
+function openRef(refKey){
+  const ref=REFS[refKey]; if(!ref) return;
+  document.getElementById("ref-title").textContent=ref.title;
+  document.getElementById("ref-body").innerHTML=`
+    <div style="background:var(--black);border:1px dashed var(--border-light);border-radius:3px;
+      height:80px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;gap:8px;">
+      <span style="font-size:20px;opacity:.3;">🖼️</span>
+      <div style="font-size:11px;color:var(--text-dim);">お手本画像<br>（Supabase連携後に表示）</div>
+    </div>
+    <div class="sec-label" style="margin-top:0;">評価チェックポイント</div>
+    <ol style="padding:0;display:flex;flex-direction:column;gap:7px;list-style:none;">
+      ${ref.points.map((p,i)=>`
+        <li style="display:flex;gap:8px;font-size:13px;color:var(--text-muted);">
+          <span style="color:var(--orange);font-family:'JetBrains Mono',monospace;font-weight:700;min-width:20px;">${String(i+1).padStart(2,"0")}</span>
+          <span>${p}</span>
+        </li>`).join("")}
+    </ol>`;
+  document.getElementById("ref-popup").classList.add("open");
+}
+function closeRef(){ document.getElementById("ref-popup").classList.remove("open"); }
+function closeRefOutside(e){ if(e.target===document.getElementById("ref-popup")) closeRef(); }
+
+// ================================================================
+// PAGE NAV
+// ================================================================
+function showPage(page){
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById(`page-${page}`).classList.add("active");
+  document.querySelectorAll(".nav-tab").forEach(t=>{
+    t.classList.toggle("active",
+      (page==="member"&&t.textContent.includes("部員"))||
+      (page==="reviewer"&&t.textContent.includes("確認")));
+  });
+  if(page==="reviewer") renderMemberList();
+}
+
+// ================================================================
+// REVIEWER PAGE
+// ================================================================
+function renderMemberList(){
+  const container=document.getElementById("member-list");
+  container.innerHTML="";
+  MEMBERS.forEach(m=>{
+    const pass=passCount(m.uid), total=totalViews();
+    const pct=Math.round(pass/total*100);
+    const div=document.createElement("div");
+    div.className="member-card";
+    div.onclick=()=>selectMember(m.uid);
+    div.innerHTML=`
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--orange);
+          display:flex;align-items:center;justify-content:center;
+          font-family:'Bebas Neue',sans-serif;font-size:15px;color:var(--black);">${m.name[0]}</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;">${m.name}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${m.year}年生</div>
+        </div>
+        <div style="margin-left:auto;">
+          ${pass===total?`<span class="done-badge">✓ 全Pass</span>`:`<span class="tag">${pass}/${total} Pass</span>`}
+        </div>
+      </div>
+      <div class="prog-track" style="height:6px;"><div class="prog-fill" style="width:${pct}%"></div></div>`;
+    container.appendChild(div);
+  });
+}
+
+function selectMember(uid){
+  const member=MEMBERS.find(m=>m.uid===uid);
+  document.getElementById("review-name").textContent=member.name;
+  document.getElementById("review-area").style.display="block";
+  document.getElementById("member-list").style.display="none";
+  renderReviewDomains(uid);
+}
+function closeReview(){
+  document.getElementById("review-area").style.display="none";
+  document.getElementById("member-list").style.display="grid";
+  renderMemberList();
+}
+
+function renderReviewDomains(uid){
+  const container=document.getElementById("review-domain-list");
+  container.innerHTML="";
+  DOMAINS.forEach(domain=>{
+    const prog=PROGRESS[uid][domain.id];
+    const sec=document.createElement("div");
+    sec.style.marginBottom="20px";
+    const tabsHTML=[0,1,2].map(si=>{
+      const name=prog.subjects[si].name||`被検者${si+1}`;
+      return `<button id="rvtab-${uid}-${domain.id}-${si}"
+        class="subject-tab ${si===0?'active':''}"
+        onclick="switchReviewSubject('${uid}','${domain.id}',${si})">${name}</button>`;
+    }).join("");
+    const panelsHTML=[0,1,2].map(si=>{
+      const viewsHTML=domain.views.map(view=>{
+        const vs=prog.subjects[si].views[view.id];
+        const hasImg=!!vs.fileDataUrl;
+        return `
+          <div class="rev-img-card" id="rvic-${uid}-${domain.id}-${si}-${view.id}">
+            <div class="rev-img-top">
+              ${hasImg?`<img src="${vs.fileDataUrl}" style="width:100%;height:100%;object-fit:cover;">`:
+                `<div style="font-size:10px;color:var(--text-dim);text-align:center;padding:8px;">未提出</div>`}
+            </div>
+            <div class="rev-img-bottom">
+              <div style="font-size:11px;font-weight:700;">${view.label}</div>
+              <span id="rvst-${uid}-${domain.id}-${si}-${view.id}" class="${SC[vs.status]}">${SL[vs.status]}</span>
+              ${hasImg?`
+                <textarea class="rev-comment" rows="2"
+                  id="rvcmt-${uid}-${domain.id}-${si}-${view.id}"
+                  placeholder="フィードバックを入力...">${vs.feedback}</textarea>
+                <div class="rev-actions">
+                  <button class="rev-btn rev-pass"
+                    onclick="reviewSet('${uid}','${domain.id}',${si},'${view.id}','pass')">✓ Pass</button>
+                  <button class="rev-btn rev-keep"
+                    onclick="reviewSet('${uid}','${domain.id}',${si},'${view.id}','keep')">↩ Keep</button>
+                </div>`:""}
+            </div>
+          </div>`;
+      }).join("");
+      return `<div id="rvpanel-${uid}-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
+        <div class="rev-img-grid">${viewsHTML}</div>
+      </div>`;
+    }).join("");
+    sec.innerHTML=`
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--orange);">${domain.icon} ${domain.name}</div>
+      <div class="subject-tabs">${tabsHTML}</div>
+      ${panelsHTML}`;
+    container.appendChild(sec);
+  });
+}
+
+function switchReviewSubject(uid,domainId,si){
+  [0,1,2].forEach(i=>{
+    const tab=document.getElementById(`rvtab-${uid}-${domainId}-${i}`);
+    const panel=document.getElementById(`rvpanel-${uid}-${domainId}-${i}`);
+    if(tab) tab.classList.toggle("active",i===si);
+    if(panel) panel.classList.toggle("active",i===si);
+  });
+}
+
+function reviewSet(uid,domainId,si,viewId,status){
+  const cmt=document.getElementById(`rvcmt-${uid}-${domainId}-${si}-${viewId}`);
+  const comment=cmt?cmt.value:"";
+  const vs=PROGRESS[uid][domainId].subjects[si].views[viewId];
+  vs.status=status;
+  vs.feedback=comment||(status==="pass"?"よく描出できています！":"もう一度練習してみてください。");
+  const rvst=document.getElementById(`rvst-${uid}-${domainId}-${si}-${viewId}`);
+  if(rvst){rvst.className=SC[status];rvst.textContent=SL[status];}
+  if(uid===window.CURRENT_UID){
+    refreshImageStatus(domainId,si,viewId);
+    updateDomainMeta(domainId);
+  }
+  renderMemberList();
+}
+
+// ================================================================
+// ENTRY
+// ================================================================
+document.getElementById("entry-btn").addEventListener("click",()=>{
+  if(canEntry(window.CURRENT_UID)) alert("🎉 認定試験へのエントリーが完了しました！\n\n2026年8月2日（日）の認定試験に参加できます。");
+});
+
+// ================================================================
+// SUPABASE ユーティリティ
+// ================================================================
+function showToast(msg, type='info'){
+  const old=document.getElementById('kp-toast'); if(old) old.remove();
+  const colors={
+    info:'background:var(--dark);border-color:var(--border-light);color:var(--text-muted)',
+    success:'background:var(--pass-bg);border-color:var(--pass-border);color:var(--pass)',
+    error:'background:var(--keep-bg);border-color:var(--keep-border);color:var(--keep)',
+    loading:'background:var(--pending-bg);border-color:var(--pending-border);color:var(--orange-light)',
+  };
+  const icons={info:'ℹ️',success:'✅',error:'❌',loading:'⏳'};
+  const el=document.createElement('div'); el.id='kp-toast';
+  el.style.cssText=`position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+    z-index:9999;padding:10px 18px;border-radius:4px;border:1px solid;
+    font-size:13px;font-family:'Noto Sans JP',sans-serif;
+    box-shadow:0 4px 20px rgba(0,0,0,.5);white-space:nowrap;${colors[type]||colors.info}`;
+  el.textContent=`${icons[type]||''} ${msg}`;
+  document.body.appendChild(el);
+  if(type!=='loading') setTimeout(()=>el.remove(),3000);
+  return el;
+}
+function hideToast(){ const el=document.getElementById('kp-toast'); if(el) el.remove(); }
+
+async function uploadImageToStorage(uid,domainId,si,viewId,file){
+  const ext=file.name.split('.').pop()||'jpg';
+  const path=`${uid}/${domainId}/${si}/${viewId}_${Date.now()}.${ext}`;
+  const {error}=await _supabase.storage.from('echo-images').upload(path,file,{upsert:true});
+  if(error) throw new Error('画像の保存に失敗しました: '+error.message);
+  const {data:urlData}=_supabase.storage.from('echo-images').getPublicUrl(path);
+  return urlData.publicUrl;
+}
+async function saveSubmissionToDB(uid,domainId,si,viewId,status,feedback,imageUrl){
+  const {error}=await _supabase.from('submissions').upsert({
+    uid, domain_id:domainId, subject_idx:si, view_id:viewId,
+    status, feedback, image_url:imageUrl, updated_at:new Date().toISOString(),
+  },{onConflict:'uid,domain_id,subject_idx,view_id'});
+  if(error) throw new Error('データの保存に失敗しました: '+error.message);
+}
+async function saveSeminarToDB(uid,domainId,seminarIdx){
+  const {error}=await _supabase.from('seminar_attendance').upsert({
+    uid, domain_id:domainId, seminar_idx:seminarIdx, updated_at:new Date().toISOString(),
+  },{onConflict:'uid,domain_id'});
+  if(error) showToast('セミナー情報の保存に失敗しました','error');
+}
+async function saveSubjectNameToDB(uid,domainId,si,name){
+  await _supabase.from('subject_names').upsert({
+    uid, domain_id:domainId, subject_idx:si, name, updated_at:new Date().toISOString(),
+  },{onConflict:'uid,domain_id,subject_idx'});
+}
+async function loadFromDB(){
+  showToast('データを読み込み中...','loading');
+  try {
+    const uid=window.CURRENT_UID;
+    const role=window.CURRENT_ROLE;
+    let subQ=_supabase.from('submissions').select('*');
+    let semQ=_supabase.from('seminar_attendance').select('*');
+    let nmQ =_supabase.from('subject_names').select('*');
+    if(role==='member'){ subQ=subQ.eq('uid',uid); semQ=semQ.eq('uid',uid); nmQ=nmQ.eq('uid',uid); }
+    const [{data:submissions},{data:seminars},{data:names}]=await Promise.all([subQ,semQ,nmQ]);
+    if(seminars) seminars.forEach(row=>{
+      if(PROGRESS[row.uid]?.[row.domain_id])
+        PROGRESS[row.uid][row.domain_id].seminarSelected=row.seminar_idx;
+    });
+    if(names) names.forEach(row=>{
+      if(PROGRESS[row.uid]?.[row.domain_id]?.subjects[row.subject_idx])
+        PROGRESS[row.uid][row.domain_id].subjects[row.subject_idx].name=row.name||'';
+    });
+    if(submissions) submissions.forEach(row=>{
+      if(!PROGRESS[row.uid]?.[row.domain_id]) return;
+      const subj=PROGRESS[row.uid][row.domain_id].subjects[row.subject_idx];
+      if(!subj?.views[row.view_id]) return;
+      subj.views[row.view_id].status=row.status;
+      subj.views[row.view_id].feedback=row.feedback||'';
+      subj.views[row.view_id].fileDataUrl=row.image_url||null;
+    });
+    hideToast(); showToast('データを読み込みました','success');
+  } catch(err){ hideToast(); showToast('読み込みエラー: '+err.message,'error'); }
+}
+
+// ================================================================
+// ログイン機能
+// ================================================================
+const REVIEWER_INVITE_CODE='KPICS-REVIEWER-2026';
+
+function switchAuthTab(tab){
+  document.getElementById('form-login').style.display  = tab==='login'  ? 'block':'none';
+  document.getElementById('form-signup').style.display = tab==='signup' ? 'block':'none';
+  document.getElementById('tab-login').classList.toggle('active', tab==='login');
+  document.getElementById('tab-signup').classList.toggle('active', tab==='signup');
+  document.getElementById('login-error').classList.remove('show');
+  document.getElementById('signup-error').classList.remove('show');
+}
+async function doLogin(){
+  const email=document.getElementById('login-email').value.trim();
+  const password=document.getElementById('login-password').value;
+  const errEl=document.getElementById('login-error');
+  const btn=document.getElementById('login-btn');
+  if(!email||!password){ errEl.textContent='メールアドレスとパスワードを入力してください'; errEl.classList.add('show'); return; }
+  btn.disabled=true; btn.textContent='ログイン中...';
+  const {error}=await _supabase.auth.signInWithPassword({email,password});
+  btn.disabled=false; btn.textContent='ログイン';
+  if(error){ errEl.textContent='メールアドレスまたはパスワードが間違っています'; errEl.classList.add('show'); }
+}
+async function doSignup(){
+  const name=document.getElementById('signup-name').value.trim();
+  const year=parseInt(document.getElementById('signup-year').value);
+  const email=document.getElementById('signup-email').value.trim();
+  const password=document.getElementById('signup-password').value;
+  const invite=document.getElementById('signup-invite').value.trim();
+  const errEl=document.getElementById('signup-error');
+  const btn=document.getElementById('signup-btn');
+  if(!name||!email||!password){ errEl.textContent='名前・メールアドレス・パスワードは必須です'; errEl.classList.add('show'); return; }
+  if(password.length<6){ errEl.textContent='パスワードは6文字以上にしてください'; errEl.classList.add('show'); return; }
+  if(invite&&invite!==REVIEWER_INVITE_CODE){ errEl.textContent='招待コードが正しくありません'; errEl.classList.add('show'); return; }
+  const role=(invite===REVIEWER_INVITE_CODE)?'reviewer':'member';
+  btn.disabled=true; btn.textContent='登録中...';
+  const {data,error}=await _supabase.auth.signUp({email,password});
+  if(error){ btn.disabled=false; btn.textContent='登録する'; errEl.textContent='登録に失敗しました: '+error.message; errEl.classList.add('show'); return; }
+  const {error:pErr}=await _supabase.from('profiles').insert({id:data.user.id,name,year:isNaN(year)?null:year,role});
+  btn.disabled=false; btn.textContent='登録する';
+  if(pErr){ errEl.textContent='プロフィール保存に失敗しました: '+pErr.message; errEl.classList.add('show'); }
+}
+async function doLogout(){ await _supabase.auth.signOut(); location.reload(); }
+
+// ================================================================
+// 認証状態の監視（アプリの起点）
+// ================================================================
+window.CURRENT_UID  = null;
+window.CURRENT_ROLE = 'member';
+
+_supabase.auth.onAuthStateChange(async (event,session)=>{
+  if(session&&session.user){
+    const user=session.user;
+
+    // 登録直後はprofilesがまだ保存中の場合があるのでリトライ
+    let profile = null;
+    for(let i=0; i<5; i++){
+      const {data}=await _supabase.from('profiles').select('*').eq('id',user.id).single();
+      if(data){ profile=data; break; }
+      await new Promise(r=>setTimeout(r,500));
+    }
+    const role=profile?.role||'member';
+    const name=profile?.name||user.email;
+    const year=profile?.year||'';
+    window.CURRENT_UID  = user.id;
+    window.CURRENT_ROLE = role;
+    document.getElementById('auth-screen').classList.remove('active');
+    document.getElementById('nav-reviewer-tab').style.display = role==='reviewer' ? '' : 'none';
+
+    if(role==='reviewer'){
+      const {data:profiles}=await _supabase.from('profiles').select('*').eq('role','member');
+      MEMBERS.length=0;
+      if(profiles) profiles.forEach(p=>MEMBERS.push({uid:p.id,name:p.name,year:p.year||''}));
+    } else {
+      MEMBERS.length=0;
+      MEMBERS.push({uid:user.id,name,year});
+    }
+
+    const avatarEl=document.querySelector('#page-member .main > div:first-child > div:first-child');
+    const nameEl  =document.querySelector('#page-member .main > div:first-child div:nth-child(2) div:first-child');
+    const subEl   =document.querySelector('#page-member .main > div:first-child div:nth-child(2) div:last-child');
+    if(avatarEl&&name) avatarEl.textContent=name[0];
     if(nameEl) nameEl.textContent=name;
     if(subEl)  subEl.textContent=`${year||'?'}年生 ・ ${role==='reviewer'?'確認者':'部員'}`;
 
