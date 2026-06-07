@@ -777,13 +777,359 @@ document.getElementById("entry-btn").addEventListener("click",()=>{
 });
 
 // ================================================================
-// INIT
+// SUPABASE 連携
 // ================================================================
-initProgress();
-updateCountdown();
-setInterval(updateCountdown, 60000);
-renderDomainList();
-updateProgressBar();
+// ▼▼▼ ここから下が「クラウドに保存する」ための仕組みです ▼▼▼
+
+// ─── テーブル・ストレージ名の設定 ───────────────────────────
+// Supabaseで作成したテーブル名・バケット名と一致させてください
+const DB_TABLE   = 'submissions';    // 判定結果を保存するテーブル
+const STORAGE_BUCKET = 'echo-images'; // 画像を保存するストレージのバケット名
+
+// ─── ローディング表示用のシンプルなUI ───────────────────────
+function showToast(msg, type = 'info') {
+  // 既存のトースト削除
+  const old = document.getElementById('kp-toast');
+  if (old) old.remove();
+
+  const colors = {
+    info:    'background:var(--dark);border-color:var(--border-light);color:var(--text-muted)',
+    success: 'background:var(--pass-bg);border-color:var(--pass-border);color:var(--pass)',
+    error:   'background:var(--keep-bg);border-color:var(--keep-border);color:var(--keep)',
+    loading: 'background:var(--pending-bg);border-color:var(--pending-border);color:var(--orange-light)',
+  };
+  const icons = { info:'ℹ️', success:'✅', error:'❌', loading:'⏳' };
+
+  const el = document.createElement('div');
+  el.id = 'kp-toast';
+  el.style.cssText = `
+    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    z-index:9999; padding:10px 18px; border-radius:4px; border:1px solid;
+    font-size:13px; font-family:'Noto Sans JP',sans-serif;
+    box-shadow:0 4px 20px rgba(0,0,0,.5); white-space:nowrap;
+    ${colors[type] || colors.info}
+  `;
+  el.textContent = `${icons[type] || ''} ${msg}`;
+  document.body.appendChild(el);
+
+  if (type !== 'loading') {
+    setTimeout(() => el.remove(), 3000);
+  }
+  return el;
+}
+function hideToast() {
+  const el = document.getElementById('kp-toast');
+  if (el) el.remove();
+}
+
+// ─── 画像をStorageにアップロードする ────────────────────────────
+// 「ファイル」を受け取って、クラウドに保存し、公開URLを返す関数です
+async function uploadImageToStorage(uid, domainId, si, viewId, file) {
+  // ファイル名を作る：「部員ID_領域_被検者番号_断面名_タイムスタンプ.拡張子」
+  const ext = file.name.split('.').pop() || 'jpg';
+  const path = `${uid}/${domainId}/${si}/${viewId}_${Date.now()}.${ext}`;
+
+  const { data, error } = await _supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(path, file, { upsert: true }); // upsert:上書きOK
+
+  if (error) {
+    console.error('Storage upload error:', error);
+    throw new Error('画像の保存に失敗しました: ' + error.message);
+  }
+
+  // 公開URLを取得（確認者ページで画像を表示するために使う）
+  const { data: urlData } = _supabase.storage
+    .from(STORAGE_BUCKET)
+    .getPublicUrl(path);
+
+  return urlData.publicUrl;
+}
+
+// ─── 判定結果をデータベースに保存する ──────────────────────────
+// status（pass/keep/pending）と feedback（コメント）をDBに書き込む
+async function saveSubmissionToDB(uid, domainId, si, viewId, status, feedback, imageUrl) {
+  // "upsert" = 同じ組み合わせがあれば上書き、なければ新規作成
+  const { error } = await _supabase
+    .from(DB_TABLE)
+    .upsert({
+      uid,
+      domain_id:  domainId,
+      subject_idx: si,
+      view_id:    viewId,
+      status,
+      feedback,
+      image_url:  imageUrl,
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: 'uid,domain_id,subject_idx,view_id' // この4つが同じなら上書き
+    });
+
+  if (error) {
+    console.error('DB save error:', error);
+    throw new Error('データの保存に失敗しました: ' + error.message);
+  }
+}
+
+// ─── セミナー受講情報をDBに保存する ────────────────────────────
+async function saveSeminarToDB(uid, domainId, seminarIdx) {
+  const { error } = await _supabase
+    .from('seminar_attendance') // セミナー出席用テーブル（後述のSQLで作成）
+    .upsert({
+      uid,
+      domain_id: domainId,
+      seminar_idx: seminarIdx,
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: 'uid,domain_id'
+    });
+
+  if (error) {
+    console.error('Seminar save error:', error);
+    // セミナー保存失敗はUI更新に影響しないのでエラー表示だけする
+    showToast('セミナー情報の保存に失敗しました', 'error');
+  }
+}
+
+// ─── DBからデータを読み込んでPROGRESSに反映する ─────────────────
+// ページ読み込み時に呼ばれます
+async function loadFromDB() {
+  showToast('データを読み込み中...', 'loading');
+  try {
+    // 提出画像・判定結果を取得
+    const { data: submissions, error: subErr } = await _supabase
+      .from(DB_TABLE)
+      .select('*');
+
+    if (subErr) throw subErr;
+
+    // セミナー受講情報を取得
+    const { data: seminars, error: semErr } = await _supabase
+      .from('seminar_attendance')
+      .select('*');
+
+    // seminarsテーブルがない場合は無視（後で作れる）
+    if (!semErr && seminars) {
+      seminars.forEach(row => {
+        if (PROGRESS[row.uid] && PROGRESS[row.uid][row.domain_id]) {
+          PROGRESS[row.uid][row.domain_id].seminarSelected = row.seminar_idx;
+        }
+      });
+    }
+
+    // submissionsをPROGRESSに反映
+    if (submissions) {
+      submissions.forEach(row => {
+        if (!PROGRESS[row.uid]) return; // 知らない部員は無視
+        if (!PROGRESS[row.uid][row.domain_id]) return;
+        const subj = PROGRESS[row.uid][row.domain_id].subjects[row.subject_idx];
+        if (!subj) return;
+        if (!subj.views[row.view_id]) return;
+        subj.views[row.view_id].status   = row.status;
+        subj.views[row.view_id].feedback  = row.feedback || '';
+        subj.views[row.view_id].fileDataUrl = row.image_url || null; // URLをそのまま使う
+      });
+    }
+
+    hideToast();
+    showToast('データを読み込みました', 'success');
+  } catch (err) {
+    hideToast();
+    showToast('読み込みエラー: ' + err.message, 'error');
+    console.error('loadFromDB error:', err);
+  }
+}
+
+// ─── 被検者名をDBに保存する ─────────────────────────────────────
+async function saveSubjectNameToDB(uid, domainId, si, name) {
+  const { error } = await _supabase
+    .from('subject_names')
+    .upsert({
+      uid,
+      domain_id: domainId,
+      subject_idx: si,
+      name,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'uid,domain_id,subject_idx' });
+
+  if (error) {
+    console.error('Subject name save error:', error);
+  }
+}
+
+// ─── 既存の handleUpload を Supabase 対応に差し替える ─────────────
+// 元の handleUpload を上書きします
+async function handleUpload(domainId, si, viewId, input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const toast = showToast('画像をアップロード中...', 'loading');
+
+  try {
+    // ① まずブラウザ上でプレビューだけ先に見せる（体感速度UP）
+    const localUrl = URL.createObjectURL(file);
+    const prev = document.getElementById(`prev-${domainId}-${si}-${viewId}`);
+    const ph   = document.getElementById(`ph-${domainId}-${si}-${viewId}`);
+    if (prev) { prev.src = localUrl; prev.style.display = 'block'; }
+    if (ph)   { ph.style.display = 'none'; }
+
+    // ② Storageに画像を保存 → 公開URLを取得
+    const imageUrl = await uploadImageToStorage(CURRENT_UID, domainId, si, viewId, file);
+
+    // ③ DBに「判定待ち」として保存
+    await saveSubmissionToDB(
+      CURRENT_UID, domainId, si, viewId,
+      'pending',               // status: まず判定待ち
+      '判定待ちです。担当者が確認します。', // feedback
+      imageUrl
+    );
+
+    // ④ ローカルのPROGRESSも更新
+    const vs = PROGRESS[CURRENT_UID][domainId].subjects[si].views[viewId];
+    vs.fileDataUrl = imageUrl;
+    vs.status   = 'pending';
+    vs.feedback = '判定待ちです。担当者が確認します。';
+
+    refreshImageStatus(domainId, si, viewId);
+    updateDomainMeta(domainId);
+
+    hideToast();
+    showToast('アップロード完了！', 'success');
+  } catch (err) {
+    hideToast();
+    showToast(err.message, 'error');
+    console.error('handleUpload error:', err);
+  }
+}
+
+// ─── 既存の reviewSet を Supabase 対応に差し替える ────────────────
+// 確認者が Pass/Keep を押した時にDBに保存する
+const _originalReviewSet = reviewSet; // 元の関数を退避
+async function reviewSet(uid, domainId, si, viewId, status) {
+  const cmt = document.getElementById(`rvcmt-${uid}-${domainId}-${si}-${viewId}`);
+  const comment = cmt ? cmt.value : '';
+  const vs = PROGRESS[uid][domainId].subjects[si].views[viewId];
+  const feedback = comment || (status === 'pass' ? 'よく描出できています！' : 'もう一度練習してみてください。');
+
+  // ローカル更新（即座に反映）
+  vs.status   = status;
+  vs.feedback = feedback;
+  const rvst = document.getElementById(`rvst-${uid}-${domainId}-${si}-${viewId}`);
+  if (rvst) { rvst.className = SC[status]; rvst.textContent = SL[status]; }
+  if (uid === CURRENT_UID) {
+    refreshImageStatus(domainId, si, viewId);
+    updateDomainMeta(domainId);
+  }
+  renderMemberList();
+
+  // DBに保存（バックグラウンドで）
+  try {
+    await saveSubmissionToDB(uid, domainId, si, viewId, status, feedback, vs.fileDataUrl);
+    showToast('判定を保存しました', 'success');
+  } catch (err) {
+    showToast('判定の保存に失敗しました', 'error');
+    console.error('reviewSet DB error:', err);
+  }
+}
+
+// ─── セミナー選択も保存する ─────────────────────────────────────
+const _origSelectSeminar = selectSeminar;
+function selectSeminar(domainId, idx) {
+  PROGRESS[CURRENT_UID][domainId].seminarSelected = idx;
+  DOMAINS.find(d => d.id === domainId).seminarDates.forEach((_, i) => {
+    const btn = document.getElementById(`sb-${domainId}-${i}`);
+    if (btn) btn.className = `sem-btn ${i === idx ? 'selected' : ''}`;
+  });
+  updateDomainMeta(domainId);
+  // DBに保存（失敗しても画面は更新済みなので問題ない）
+  saveSeminarToDB(CURRENT_UID, domainId, idx);
+}
+
+// ─── 被検者名の入力もDBに保存する ──────────────────────────────
+const _origUpdateSubjectName = updateSubjectName;
+function updateSubjectName(domainId, si, val) {
+  PROGRESS[CURRENT_UID][domainId].subjects[si].name = val;
+  updateDomainMeta(domainId);
+  saveSubjectNameToDB(CURRENT_UID, domainId, si, val);
+}
+
+// ================================================================
+// INIT（Supabase対応版）
+// ================================================================
+async function init() {
+  initProgress();           // まずローカルの空データを初期化
+  updateCountdown();
+  setInterval(updateCountdown, 60000);
+  renderDomainList();       // 空の状態で画面を描画（ローディング中でも見える）
+  updateProgressBar();
+
+  await loadFromDB();       // DBから最新データを取得
+
+  // DBのデータを反映してUIを再描画
+  renderDomainList();
+  updateProgressBar();
+  if (document.getElementById('page-reviewer').classList.contains('active')) {
+    renderMemberList();
+  }
+}
+
+init(); // アプリ起動！
 </script>
 </body>
 </html>
+
+<!--
+=================================================================
+【Supabase設定メモ】
+このアプリを動かすには、Supabaseで以下のSQLを実行してください。
+Supabase ダッシュボード → SQL Editor で貼り付けて Run してください。
+=================================================================
+
+-- ① 提出画像・判定結果テーブル
+CREATE TABLE IF NOT EXISTS submissions (
+  id          BIGSERIAL PRIMARY KEY,
+  uid         TEXT NOT NULL,
+  domain_id   TEXT NOT NULL,
+  subject_idx INTEGER NOT NULL,
+  view_id     TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  feedback    TEXT,
+  image_url   TEXT,
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (uid, domain_id, subject_idx, view_id)
+);
+
+-- ② セミナー受講テーブル
+CREATE TABLE IF NOT EXISTS seminar_attendance (
+  id          BIGSERIAL PRIMARY KEY,
+  uid         TEXT NOT NULL,
+  domain_id   TEXT NOT NULL,
+  seminar_idx INTEGER NOT NULL,
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (uid, domain_id)
+);
+
+-- ③ 被検者名テーブル
+CREATE TABLE IF NOT EXISTS subject_names (
+  id          BIGSERIAL PRIMARY KEY,
+  uid         TEXT NOT NULL,
+  domain_id   TEXT NOT NULL,
+  subject_idx INTEGER NOT NULL,
+  name        TEXT,
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (uid, domain_id, subject_idx)
+);
+
+-- ④ Row Level Security（セキュリティ設定）
+-- 今は全員読み書きOKにしています（テスト用）
+ALTER TABLE submissions        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE seminar_attendance ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subject_names      ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "allow_all_submissions"        ON submissions        FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all_seminar"            ON seminar_attendance FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all_subject_names"      ON subject_names      FOR ALL USING (true) WITH CHECK (true);
+
+-- ⑤ Storageバケット（Supabase画面からでもOK）
+-- Storage → New bucket → 名前: echo-images → Public: ON
+-->
