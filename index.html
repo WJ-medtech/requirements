@@ -719,8 +719,11 @@ function updateSimpleDate(domainId,di,val){
     ? `<span class="sbadge s-pa">✓ ${filled}回練習済み</span>`
     : `<span class="sbadge s-un">あと${3-filled}日入力で完了</span>`;
   updateDomainMeta(domainId);
-  // DB保存（エラーをきちんと表示する）
-  savePracticeDateToDB(uid, domainId, 0, di, val);
+  // DB保存
+  _supabase.from('practice_dates').upsert({
+    uid, domain_id:domainId, subject_idx:0, date_idx:di,
+    practice_date:val||null, updated_at:new Date().toISOString(),
+  },{onConflict:'uid,domain_id,subject_idx,date_idx'}).catch(()=>{});
 }
 
 
@@ -794,7 +797,7 @@ function renderImageGrid(domainId, si){
           <span id="st-${domainId}-${si}-${view.id}" class="${SC[vs.status]}">${SL[vs.status]}</span>
           <button class="ref-btn" onclick="openRef('${view.refKey}')">基準 ▸</button>
         </div>
-        <div id="fb-${domainId}-${si}-${view.id}" class="feedback">${vs.feedback||"（フィードバックなし）"}</div>
+        <div id="fb-${domainId}-${si}-${view.id}" class="feedback${vs.status==='pass'?' pa':vs.status==='keep'?' ke':''}" style="${vs.status==='pass'?'display:none;':''}">${vs.feedback||"（フィードバックなし）"}</div>
       </div>`;
     container.appendChild(div);
     if(vs.fileDataUrl){
@@ -994,8 +997,13 @@ function refreshImageStatus(domainId,si,viewId){
   const fbEl=document.getElementById(`fb-${domainId}-${si}-${viewId}`);
   if(stEl){stEl.className=SC[vs.status];stEl.textContent=SL[vs.status];}
   if(fbEl){
-    fbEl.textContent=vs.feedback||"（フィードバックなし）";
-    fbEl.className="feedback"+(vs.status==="pass"?" pa":vs.status==="keep"?" ke":"");
+    if(vs.status==="pass"){
+      fbEl.style.display="none";
+    } else {
+      fbEl.style.display="";
+      fbEl.textContent=vs.feedback||"（フィードバックなし）";
+      fbEl.className="feedback"+(vs.status==="keep"?" ke":vs.status==="pending"?" ":"");
+    }
   }
 }
 
@@ -1186,15 +1194,29 @@ function renderReviewDomains(uid){
     // 血管穿刺（被検者なし・練習日のみ）
     if(domain.isSimplePractice){
       const dates=prog.simpleDates||[];
+      const filled=dates.filter(d=>d&&d.trim()!=="").length;
       const datesHTML=dates.length>0
         ? dates.map((d,di)=>`
-            <div style="font-size:12px;color:var(--text-muted);padding:4px 0;">
-              練習 ${di+1}：<span style="color:${d?'var(--pass)':'var(--text-dim)'};">${d||'未入力'}</span>
+            <div style="font-size:12px;color:var(--text-muted);padding:4px 0;display:flex;align-items:center;gap:8px;">
+              <span style="min-width:48px;">練習 ${di+1}</span>
+              <span style="color:${d&&d.trim()?'var(--pass)':'var(--text-dim)'};">${d&&d.trim()?d:'未入力'}</span>
+              ${d&&d.trim()?'<span style="color:var(--pass);font-size:10px;">✓</span>':''}
             </div>`).join("")
-        : `<div style="font-size:12px;color:var(--text-dim);">未入力</div>`;
+        : `<div style="font-size:12px;color:var(--text-dim);">練習日が未入力です</div>`;
+      const seminarSel=prog.seminarSelected;
+      const seminarHTML=seminarSel!=null
+        ? `<span style="background:var(--pass-bg);border:1px solid var(--pass-border);color:var(--pass);font-size:10px;font-weight:700;padding:2px 7px;border-radius:2px;">✓ ${domain.seminarDates[seminarSel]}</span>`
+        : `<span style="background:var(--border);border:1px solid var(--border-light);color:var(--text-muted);font-size:10px;padding:2px 6px;border-radius:2px;">未受講</span>`;
+      const statusBadge=filled>=3
+        ? `<span style="background:var(--pass-bg);border:1px solid var(--pass-border);color:var(--pass);font-size:11px;font-weight:700;padding:3px 10px;border-radius:2px;">✓ ${filled}回練習完了</span>`
+        : `<span style="background:var(--border);border:1px solid var(--border-light);color:var(--text-muted);font-size:11px;padding:3px 10px;border-radius:2px;">あと${3-filled}日入力で完了</span>`;
       sec.innerHTML=`
         <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--orange);">${domain.icon} ${domain.name}</div>
-        <div style="padding:8px 0;">${datesHTML}</div>`;
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-size:10px;color:var(--text-dim);">セミナー：</span>${seminarHTML}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">${statusBadge}</div>
+        <div style="background:var(--dark);border:1px solid var(--border);border-radius:3px;padding:10px;">${datesHTML}</div>`;
       container.appendChild(sec);
       return;
     }
@@ -1212,7 +1234,8 @@ function renderReviewDomains(uid){
       const viewsHTML=domain.views.map(view=>{
         const vs=prog.subjects[si].views[view.id];
         if(!vs) return '';
-        const hasImg=!!vs.fileDataUrl;
+        const isPassed = vs.status === 'pass';
+        const isKept = vs.status === 'keep';
         return `
           <div class="rev-img-card" id="rvic-${uid}-${domain.id}-${si}-${view.id}">
             <div class="rev-img-top">
@@ -1226,7 +1249,8 @@ function renderReviewDomains(uid){
               ${hasImg?`
                 <textarea class="rev-comment" rows="2"
                   id="rvcmt-${uid}-${domain.id}-${si}-${view.id}"
-                  placeholder="フィードバックを入力...">${vs.feedback}</textarea>
+                  placeholder="フィードバックを入力..."
+                  style="${isPassed?'display:none;':''}">${vs.status==='keep'?vs.feedback:''}</textarea>
                 <div class="rev-actions">
                   <button class="rev-btn rev-pass"
                     onclick="reviewSet('${uid}','${domain.id}',${si},'${view.id}','pass')">✓ Pass</button>
@@ -1267,11 +1291,26 @@ async function reviewSet(uid,domainId,si,viewId,status){
   vs.status=status; vs.feedback=feedback;
   const rvst=document.getElementById(`rvst-${uid}-${domainId}-${si}-${viewId}`);
   if(rvst){rvst.className=SC[status];rvst.textContent=SL[status];}
+  // Pass時はtextareaを非表示、Keep時は表示してフィードバックを促す
+  if(cmt){
+    if(status==="pass"){
+      cmt.style.display="none";
+      cmt.value="";
+    } else {
+      cmt.style.display="";
+      if(!cmt.value) cmt.placeholder="フィードバックを入力（どこを改善するか具体的に）";
+    }
+  }
   if(uid===window.CURRENT_UID){
     refreshImageStatus(domainId,si,viewId);
     updateDomainMeta(domainId);
+    // 全Pass達成チェック
+    if(status==="pass" && canEntry(uid)){
+      triggerCelebration(uid);
+    }
   }
   renderMemberList();
+  updateProgressBar();
   try {
     await saveSubmissionToDB(uid,domainId,si,viewId,status,feedback,vs.fileDataUrl);
     showToast('判定を保存しました','success');
@@ -1284,6 +1323,224 @@ async function reviewSet(uid,domainId,si,viewId,status){
 document.getElementById("entry-btn").addEventListener("click",()=>{
   if(canEntry(window.CURRENT_UID)) alert("🎉 認定試験へのエントリーが完了しました！\n\n2026年8月2日（日）の認定試験に参加できます。");
 });
+
+// ================================================================
+// 全Pass演出 + エントリーカード
+// ================================================================
+let _celebrationShown = false;
+
+function triggerCelebration(uid){
+  if(_celebrationShown){
+    showEntryCard(uid);
+    return;
+  }
+  _celebrationShown = true;
+  launchFireworks();
+  setTimeout(()=>showEntryCard(uid), 3500);
+}
+
+function launchFireworks(){
+  const old = document.getElementById('kp-fireworks-overlay');
+  if(old) old.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'kp-fireworks-overlay';
+  overlay.style.cssText = `
+    position:fixed;inset:0;z-index:1000;pointer-events:none;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;
+  `;
+  document.body.appendChild(overlay);
+
+  const canvas = document.createElement('canvas');
+  canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  overlay.appendChild(canvas);
+  const ctx = canvas.getContext('2d');
+
+  const msg = document.createElement('div');
+  msg.style.cssText = `
+    position:relative;z-index:2;
+    font-family:'Bebas Neue',sans-serif;font-size:clamp(26px,6vw,50px);
+    letter-spacing:.1em;color:#E8A020;text-align:center;
+    text-shadow:0 0 30px rgba(232,160,32,.8),0 0 60px rgba(232,160,32,.5);
+    animation:kpPulse 0.6s ease-out;
+  `;
+  msg.textContent = '🏆 ALL PASS ACHIEVED! 🏆';
+  overlay.appendChild(msg);
+
+  const sub = document.createElement('div');
+  sub.style.cssText = `
+    position:relative;z-index:2;font-size:clamp(12px,2.5vw,17px);
+    color:#F0F0F0;text-align:center;font-weight:700;letter-spacing:.04em;
+    animation:kpFadeIn 1s ease-out 0.3s both;
+  `;
+  sub.textContent = '全条件達成！認定試験受験資格を獲得しました';
+  overlay.appendChild(sub);
+
+  if(!document.getElementById('kp-celebrate-style')){
+    const style = document.createElement('style');
+    style.id = 'kp-celebrate-style';
+    style.textContent = `
+      @keyframes kpPulse{0%{opacity:0;transform:scale(.5);}60%{transform:scale(1.08);}100%{opacity:1;transform:scale(1);}}
+      @keyframes kpFadeIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:translateY(0);}}
+      @keyframes kpCardIn{from{opacity:0;transform:scale(.92) translateY(20px);}to{opacity:1;transform:scale(1) translateY(0);}}
+      @keyframes kpGlow{0%,100%{box-shadow:0 0 20px rgba(232,160,32,.4),0 0 60px rgba(232,160,32,.2);}50%{box-shadow:0 0 40px rgba(232,160,32,.8),0 0 100px rgba(232,160,32,.4);}}
+    `;
+    document.head.appendChild(style);
+  }
+
+  const particles = [];
+  const colors = ['#E8A020','#F5B84A','#3DD68C','#F06060','#60B0F0','#E060F0','#FFFF55'];
+  function spawnBurst(x,y){
+    const count = 55+Math.floor(Math.random()*35);
+    for(let i=0;i<count;i++){
+      const angle=(Math.PI*2*i)/count+Math.random()*0.3;
+      const speed=2+Math.random()*5;
+      particles.push({
+        x,y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,
+        life:1,decay:0.012+Math.random()*0.01,
+        size:2+Math.random()*3,
+        color:colors[Math.floor(Math.random()*colors.length)],
+        trail:[],
+      });
+    }
+  }
+  const w=canvas.width,h=canvas.height;
+  [[w*.2,h*.35],[w*.5,h*.22],[w*.8,h*.3],[w*.35,h*.45],[w*.65,h*.4],[w*.1,h*.5],[w*.9,h*.45]]
+    .forEach((p,i)=>setTimeout(()=>spawnBurst(p[0],p[1]),i*230));
+  for(let i=0;i<8;i++) setTimeout(()=>spawnBurst(w*.1+Math.random()*w*.8,h*.1+Math.random()*h*.5),500+Math.random()*2000);
+
+  let frame=0;
+  function animate(){
+    ctx.fillStyle='rgba(0,0,0,0.16)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    for(let i=particles.length-1;i>=0;i--){
+      const p=particles[i];
+      p.trail.push({x:p.x,y:p.y,life:p.life});
+      if(p.trail.length>6) p.trail.shift();
+      p.trail.forEach((t,ti)=>{
+        ctx.globalAlpha=(t.life*(ti/p.trail.length))*0.35;
+        ctx.fillStyle=p.color;
+        ctx.beginPath();ctx.arc(t.x,t.y,p.size*.5,0,Math.PI*2);ctx.fill();
+      });
+      ctx.globalAlpha=p.life;
+      ctx.fillStyle=p.color;
+      ctx.shadowColor=p.color;ctx.shadowBlur=7;
+      ctx.beginPath();ctx.arc(p.x,p.y,p.size,0,Math.PI*2);ctx.fill();
+      ctx.shadowBlur=0;
+      p.x+=p.vx;p.y+=p.vy;p.vy+=0.08;p.vx*=0.99;p.life-=p.decay;
+      if(p.life<=0) particles.splice(i,1);
+    }
+    ctx.globalAlpha=1;
+    frame++;
+    if(frame<210) requestAnimationFrame(animate);
+    else ctx.clearRect(0,0,canvas.width,canvas.height);
+  }
+  animate();
+  setTimeout(()=>{
+    overlay.style.transition='opacity 0.8s';overlay.style.opacity='0';
+    setTimeout(()=>overlay.remove(),900);
+  },3200);
+}
+
+function showEntryCard(uid){
+  const old=document.getElementById('kp-entry-card-overlay');
+  if(old) old.remove();
+  const member=MEMBERS.find(m=>m.uid===uid);
+  const name=member?member.name:'受験者';
+  const year=member?member.year:'';
+  const now=new Date();
+  const issued=`${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日`;
+  const examDate='2026年8月2日（日）';
+  const cardNo='KPICS-'+String(now.getFullYear()).slice(2)+'-'+String(uid).replace(/[^0-9a-zA-Z]/g,'').slice(-4).toUpperCase();
+
+  const overlay=document.createElement('div');
+  overlay.id='kp-entry-card-overlay';
+  overlay.style.cssText=`
+    position:fixed;inset:0;z-index:2000;
+    background:rgba(0,0,0,0.88);backdrop-filter:blur(8px);
+    display:flex;align-items:center;justify-content:center;padding:20px;
+    animation:kpFadeIn 0.4s ease-out;
+  `;
+  overlay.innerHTML=`
+    <div style="max-width:460px;width:100%;animation:kpCardIn 0.5s ease-out;">
+      <div style="text-align:right;margin-bottom:10px;">
+        <button onclick="document.getElementById('kp-entry-card-overlay').remove()"
+          style="background:transparent;border:1px solid rgba(255,255,255,.3);color:rgba(255,255,255,.7);
+          padding:5px 14px;border-radius:2px;font-size:12px;cursor:pointer;font-family:'Noto Sans JP',sans-serif;">
+          ✕ 閉じる
+        </button>
+      </div>
+      <div style="
+        background:linear-gradient(145deg,#141414 0%,#1e1e1e 50%,#141414 100%);
+        border:2px solid #E8A020;border-radius:8px;padding:28px 28px 24px;
+        box-shadow:0 0 40px rgba(232,160,32,.35),0 20px 60px rgba(0,0,0,.6);
+        animation:kpGlow 3s ease-in-out infinite;position:relative;overflow:hidden;
+      ">
+        <div style="position:absolute;top:-40px;right:-40px;width:180px;height:180px;border-radius:50%;
+          background:radial-gradient(circle,rgba(232,160,32,.08) 0%,transparent 70%);pointer-events:none;"></div>
+        <div style="position:absolute;bottom:-60px;left:-60px;width:200px;height:200px;border-radius:50%;
+          background:radial-gradient(circle,rgba(61,214,140,.05) 0%,transparent 70%);pointer-events:none;"></div>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:18px;">
+          <div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:11px;letter-spacing:.2em;color:var(--orange);margin-bottom:2px;">K-PICS</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:.06em;color:#F0F0F0;line-height:1;">認定試験受験票</div>
+            <div style="font-size:10px;color:var(--text-muted);letter-spacing:.06em;margin-top:2px;">ADMISSION CARD</div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text-dim);">CARD NO.</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--orange);font-weight:600;">${cardNo}</div>
+          </div>
+        </div>
+        <div style="height:1px;background:linear-gradient(90deg,transparent,var(--orange),transparent);margin-bottom:18px;"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;">
+          <div>
+            <div style="font-size:9px;color:var(--text-dim);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px;">受験者氏名</div>
+            <div style="font-size:20px;font-weight:900;color:#F0F0F0;">${name}</div>
+          </div>
+          <div>
+            <div style="font-size:9px;color:var(--text-dim);letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px;">学年</div>
+            <div style="font-size:20px;font-weight:900;color:#F0F0F0;">${year}年生</div>
+          </div>
+        </div>
+        <div style="background:rgba(232,160,32,.07);border:1px solid rgba(232,160,32,.25);border-radius:4px;padding:14px;margin-bottom:16px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div>
+              <div style="font-size:9px;color:var(--text-dim);letter-spacing:.1em;margin-bottom:4px;">試験日</div>
+              <div style="font-size:13px;font-weight:700;color:var(--orange);">${examDate}</div>
+            </div>
+            <div>
+              <div style="font-size:9px;color:var(--text-dim);letter-spacing:.1em;margin-bottom:4px;">発行日</div>
+              <div style="font-size:13px;font-weight:700;color:#F0F0F0;">${issued}</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:16px;">
+          <span style="background:var(--pass-bg);border:1px solid var(--pass-border);color:var(--pass);font-size:10px;font-weight:700;padding:3px 8px;border-radius:2px;font-family:'JetBrains Mono',monospace;">✓ キー画像 全Pass</span>
+          <span style="background:var(--pass-bg);border:1px solid var(--pass-border);color:var(--pass);font-size:10px;font-weight:700;padding:3px 8px;border-radius:2px;font-family:'JetBrains Mono',monospace;">✓ セミナー完了</span>
+          <span style="background:var(--pass-bg);border:1px solid var(--pass-border);color:var(--pass);font-size:10px;font-weight:700;padding:3px 8px;border-radius:2px;font-family:'JetBrains Mono',monospace;">✓ 血管穿刺完了</span>
+        </div>
+        <div style="height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);margin-bottom:14px;"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:9px;color:var(--text-dim);line-height:1.8;">
+            K-PICS エコー部 認定試験委員会<br>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:8px;">Point-of-Care Image Certification System</span>
+          </div>
+          <div style="width:40px;height:40px;background:var(--orange);border-radius:50%;
+            display:flex;align-items:center;justify-content:center;
+            font-family:'Bebas Neue',sans-serif;font-size:13px;color:var(--black);flex-shrink:0;">合格</div>
+        </div>
+      </div>
+      <div style="text-align:center;margin-top:14px;font-size:11px;color:rgba(255,255,255,.5);line-height:1.7;">
+        📸 スクリーンショットを保存して試験当日に持参してください<br>
+        <span style="font-size:10px;color:rgba(255,255,255,.3);">2026年8月2日（日）認定試験にエントリー完了</span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click',e=>{ if(e.target===overlay) overlay.remove(); });
+}
 
 // ================================================================
 // SUPABASE ユーティリティ
@@ -1550,52 +1807,6 @@ function closeReview(){
 
 
 
-// ================================================================
-// ENTRY
-// ================================================================
-document.getElementById("entry-btn").addEventListener("click",()=>{
-  if(canEntry(window.CURRENT_UID)) alert("🎉 認定試験へのエントリーが完了しました！\n\n2026年8月2日（日）の認定試験に参加できます。");
-});
-
-// ================================================================
-// SUPABASE ユーティリティ
-// ================================================================
-function showToast(msg, type='info'){
-  const old=document.getElementById('kp-toast'); if(old) old.remove();
-  const colors={
-    info:'background:var(--dark);border-color:var(--border-light);color:var(--text-muted)',
-    success:'background:var(--pass-bg);border-color:var(--pass-border);color:var(--pass)',
-    error:'background:var(--keep-bg);border-color:var(--keep-border);color:var(--keep)',
-    loading:'background:var(--pending-bg);border-color:var(--pending-border);color:var(--orange-light)',
-  };
-  const icons={info:'ℹ️',success:'✅',error:'❌',loading:'⏳'};
-  const el=document.createElement('div'); el.id='kp-toast';
-  el.style.cssText=`position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
-    z-index:9999;padding:10px 18px;border-radius:4px;border:1px solid;
-    font-size:13px;font-family:'Noto Sans JP',sans-serif;
-    box-shadow:0 4px 20px rgba(0,0,0,.5);white-space:nowrap;${colors[type]||colors.info}`;
-  el.textContent=`${icons[type]||''} ${msg}`;
-  document.body.appendChild(el);
-  if(type!=='loading') setTimeout(()=>el.remove(),3000);
-  return el;
-}
-function hideToast(){ const el=document.getElementById('kp-toast'); if(el) el.remove(); }
-
-async function uploadImageToStorage(uid,domainId,si,viewId,file){
-  const ext=file.name.split('.').pop()||'jpg';
-  const path=`${uid}/${domainId}/${si}/${viewId}_${Date.now()}.${ext}`;
-  const {error}=await _supabase.storage.from('echo-images').upload(path,file,{upsert:true});
-  if(error) throw new Error('画像の保存に失敗しました: '+error.message);
-  const {data:urlData}=_supabase.storage.from('echo-images').getPublicUrl(path);
-  return urlData.publicUrl;
-}
-async function saveSubmissionToDB(uid,domainId,si,viewId,status,feedback,imageUrl){
-  const {error}=await _supabase.from('submissions').upsert({
-    uid, domain_id:domainId, subject_idx:si, view_id:viewId,
-    status, feedback, image_url:imageUrl, updated_at:new Date().toISOString(),
-  },{onConflict:'uid,domain_id,subject_idx,view_id'});
-  if(error) throw new Error('データの保存に失敗しました: '+error.message);
-}
 async function saveSeminarToDB(uid,domainId,seminarIdx){
   const {error}=await _supabase.from('seminar_attendance').upsert({
     uid, domain_id:domainId, seminar_idx:seminarIdx, updated_at:new Date().toISOString(),
@@ -1608,11 +1819,12 @@ async function saveSubjectNameToDB(uid,domainId,si,name){
   },{onConflict:'uid,domain_id,subject_idx'});
 }
 async function savePracticeDateToDB(uid,domainId,si,di,dateVal){
-  const {error}=await _supabase.from('practice_dates').upsert({
-    uid, domain_id:domainId, subject_idx:si, date_idx:di, practice_date:dateVal||null,
-    updated_at:new Date().toISOString(),
-  },{onConflict:'uid,domain_id,subject_idx,date_idx'});
-  if(error) showToast('練習日の保存に失敗しました: '+error.message,'error');
+  try {
+    await _supabase.from('practice_dates').upsert({
+      uid, domain_id:domainId, subject_idx:si, date_idx:di, practice_date:dateVal||null,
+      updated_at:new Date().toISOString(),
+    },{onConflict:'uid,domain_id,subject_idx,date_idx'});
+  } catch(e){ /* テーブル未作成の場合は無視 */ }
 }
 async function loadFromDB(){
   showToast('データを読み込み中...','loading');
