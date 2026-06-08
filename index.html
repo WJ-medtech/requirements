@@ -428,10 +428,12 @@ const DOMAINS = [
   },
   {
     id:"bowel", name:"排便ケアエコー", icon:"🔬",
-    subtitle:"断面は先生確認後に追加予定",
+    subtitle:"下腹部横断像（短軸・長軸）＋ 下行結腸短軸",
     seminarDates:["7/1（水）","7/28（火）"],
     views:[
-      {id:"bowel_tbd", label:"未定（後で追加）", refKey:"bowel_tbd"},
+      {id:"bowel_transverse_s", label:"下腹部横断像（短軸）", refKey:"bowel_tbd"},
+      {id:"bowel_transverse_l", label:"下腹部横断像（長軸）", refKey:"bowel_tbd"},
+      {id:"bowel_descending",   label:"下行結腸（短軸）",     refKey:"bowel_tbd"},
     ]
   },
 ];
@@ -466,15 +468,15 @@ const CURRENT_UID = "m001";
 const PROGRESS = {};
 function initProgress() {
   MEMBERS.forEach(m => {
-    if(PROGRESS[m.uid]) return; // 既に初期化済みならスキップ
+    if(PROGRESS[m.uid]) return;
     PROGRESS[m.uid] = {};
     DOMAINS.forEach(d => {
       PROGRESS[m.uid][d.id] = {
         seminarSelected: null,
         subjects: [0,1,2].map(() => ({
-          name: "",
+          name: "",   // 撮像日（血管穿刺は使わない）
           views: Object.fromEntries(d.views.map(v => [v.id, {status:"unsubmitted", feedback:"", fileDataUrl:null}])),
-          practiceDates: d.isPracticeLog ? ["","",""] : null, // 血管穿刺用
+          practiceDates: ["","",""], // 全ドメイン共通：4回目以降も追加可能
         }))
       };
     });
@@ -497,10 +499,10 @@ function passCount(uid){
   return n;
 }
 function practiceComplete(uid,domainId){
-  // 血管穿刺：3被検者全員が3日入力済みならtrue
+  // 血管穿刺のみ：3被検者全員が3日以上入力済みで完了
   const prog=PROGRESS[uid]?.[domainId];
   if(!prog) return false;
-  return prog.subjects.every(s => s.practiceDates && s.practiceDates.every(d=>d.trim()!==""));
+  return prog.subjects.every(s => (s.practiceDates||[]).filter(d=>d.trim()!=="").length >= 3);
 }
 function seminarCount(uid){ return DOMAINS.filter(d => PROGRESS[uid]?.[d.id]?.seminarSelected !== null).length; }
 function canEntry(uid){
@@ -514,7 +516,7 @@ function subjectAllPass(uid,domainId,si){
   const d = DOMAINS.find(x=>x.id===domainId);
   if(d.isPracticeLog){
     const prog=PROGRESS[uid]?.[domainId];
-    return prog?.subjects[si]?.practiceDates?.every(dt=>dt.trim()!=="") || false;
+    return (prog?.subjects[si]?.practiceDates||[]).filter(dt=>dt.trim()!=="").length >= 3;
   }
   return d.views.every(v => PROGRESS[uid]?.[domainId]?.subjects[si]?.views[v.id]?.status==="pass");
 }
@@ -636,8 +638,33 @@ function renderImageBody(domain, uid){
             style="max-width:200px;">
         </div>
         <div class="img-grid" id="ig-${domain.id}-${si}"></div>
+        ${renderPracticeDatesHTML(domain.id, si, prog.subjects[si].practiceDates)}
       </div>
     `).join("")}`;
+}
+
+// 練習日HTMLを共通関数化（全ドメインで使用）
+function renderPracticeDatesHTML(domainId, si, dates){
+  const arr = dates||["","",""];
+  return `
+    <div style="margin-top:12px;">
+      <div class="sec-label" style="margin-top:0;">練習記録（任意・4回目以降も追加可）</div>
+      <div style="display:flex;flex-direction:column;gap:6px;max-width:320px;" id="pdlist-${domainId}-${si}">
+        ${arr.map((d,di)=>`
+          <div style="display:flex;align-items:center;gap:8px;" id="pdrow-${domainId}-${si}-${di}">
+            <span style="font-size:11px;color:var(--text-muted);min-width:44px;">練習 ${di+1}</span>
+            <input class="field" type="date" value="${d}"
+              onchange="updatePracticeDate('${domainId}',${si},${di},this.value)"
+              style="max-width:180px;">
+          </div>
+        `).join("")}
+      </div>
+      <button onclick="addPracticeDate('${domainId}',${si})"
+        style="margin-top:6px;font-size:11px;padding:4px 10px;background:transparent;border:1px dashed var(--border-light);color:var(--text-dim);border-radius:2px;cursor:pointer;">
+        ＋ 練習日を追加
+      </button>
+      <div id="pd-status-${domainId}-${si}" style="font-size:11px;margin-top:4px;"></div>
+    </div>`;
 }
 
 function renderPracticeLogBody(domain, uid){
@@ -652,29 +679,7 @@ function renderPracticeLogBody(domain, uid){
     </div>
     ${[0,1,2].map(si=>`
       <div id="spanel-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
-        <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px;">
-          <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">撮像日</span>
-          <input class="field" type="date"
-            value="${prog.subjects[si].name}"
-            onchange="updateSubjectName('${domain.id}',${si},this.value)"
-            style="max-width:200px;">
-        </div>
-        <div style="display:flex;flex-direction:column;gap:8px;max-width:320px;" id="pdlist-${domain.id}-${si}">
-          ${(prog.subjects[si].practiceDates||["","",""]).map((d,di)=>`
-            <div style="display:flex;align-items:center;gap:8px;" id="pdrow-${domain.id}-${si}-${di}">
-              <span style="font-size:11px;color:var(--text-muted);min-width:44px;">練習 ${di+1}</span>
-              <input class="field" type="date"
-                value="${d}"
-                onchange="updatePracticeDate('${domain.id}',${si},${di},this.value)"
-                style="max-width:200px;">
-            </div>
-          `).join("")}
-        </div>
-        <button onclick="addPracticeDate('${domain.id}',${si})"
-          style="margin-top:8px;font-size:11px;padding:5px 12px;background:var(--dark);border:1px dashed var(--border-light);color:var(--text-muted);border-radius:2px;cursor:pointer;">
-          ＋ 練習日を追加
-        </button>
-        <div id="pd-status-${domain.id}-${si}" style="font-size:11px;margin-top:6px;"></div>
+        ${renderPracticeDatesHTML(domain.id, si, prog.subjects[si].practiceDates)}
       </div>
     `).join("")}`;
 }
@@ -733,23 +738,27 @@ function updateDomainMeta(domainId){
     : `<span class="tag">未受講</span>`;
 
   const subjHTML = [0,1,2].map(si => {
-    const name=prog.subjects[si].name||`被検者${si+1}`;
+    const subj=prog.subjects[si];
+    const dateStr=subj.name; // 撮像日
+    const displayName=domain.isPracticeLog
+      ? `被検者${si+1}`
+      : (dateStr ? dateStr.slice(5) : `被検者${si+1}`); // MM-DD表示
     const allPass=subjectAllPass(uid,domainId,si);
     let dots="";
     if(!domain.isPracticeLog){
       dots=domain.views.map(v=>{
-        const s=prog.subjects[si].views[v.id]?.status||"unsubmitted";
+        const s=subj.views[v.id]?.status||"unsubmitted";
         return `<div class="subj-dot ${s==="pass"?"pa":s==="keep"?"ke":s==="pending"?"pe":""}"></div>`;
       }).join("");
     } else {
-      const dates=prog.subjects[si].practiceDates||[];
-      dots=dates.map(d=>
+      const dates=subj.practiceDates||[];
+      dots=dates.slice(0,3).map(d=>
         `<div class="subj-dot ${d.trim()?"pa":""}"></div>`
       ).join("");
     }
     return `<div style="display:flex;align-items:center;gap:4px;">
       ${allPass?`<span class="done-badge" style="font-size:9px;padding:1px 5px;">✓</span>`:`<span class="tag" style="font-size:9px;padding:1px 5px;">${si+1}</span>`}
-      <span style="font-size:10px;color:var(--text-dim);max-width:55px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}</span>
+      <span style="font-size:10px;color:var(--text-dim);max-width:55px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${displayName}</span>
       <div style="display:flex;gap:3px;">${dots}</div>
     </div>`;
   }).join("");
@@ -763,7 +772,8 @@ function updateDomainMeta(domainId){
     const name=prog.subjects[si].name;
     const allPass=subjectAllPass(uid,domainId,si);
     const isActive=activeSubject[domainId]===si;
-    tab.textContent=name?name:`被検者 ${si+1}`;
+    // 血管穿刺は撮像日なし → 被検者N表示
+    tab.textContent=(!domain.isPracticeLog && name) ? name.slice(5)||`被検者${si+1}` : `被検者 ${si+1}`;
     tab.className=`subject-tab ${isActive?"active":""} ${allPass?"complete":""}`;
   });
 
@@ -901,20 +911,23 @@ function refreshImageStatus(domainId,si,viewId){
 function openRef(refKey){
   const ref=REFS[refKey]; if(!ref) return;
   document.getElementById("ref-title").textContent=ref.title;
+  const pointsHTML = ref.points.length>0
+    ? `<div class="sec-label" style="margin-top:12px;">評価チェックポイント</div>
+       <ol style="padding:0;display:flex;flex-direction:column;gap:7px;list-style:none;">
+         ${ref.points.map((p,i)=>`
+           <li style="display:flex;gap:8px;font-size:13px;color:var(--text-muted);">
+             <span style="color:var(--orange);font-family:'JetBrains Mono',monospace;font-weight:700;min-width:20px;">${String(i+1).padStart(2,"0")}</span>
+             <span>${p}</span>
+           </li>`).join("")}
+       </ol>`
+    : `<div style="font-size:12px;color:var(--text-dim);text-align:center;padding:16px 0;">評価基準は準備中です</div>`;
   document.getElementById("ref-body").innerHTML=`
     <div style="background:var(--black);border:1px dashed var(--border-light);border-radius:3px;
-      height:80px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;gap:8px;">
+      height:80px;display:flex;align-items:center;justify-content:center;gap:8px;">
       <span style="font-size:20px;opacity:.3;">🖼️</span>
-      <div style="font-size:11px;color:var(--text-dim);">お手本画像<br>（準備中）</div>
+      <div style="font-size:11px;color:var(--text-dim);">見本画像（準備中）</div>
     </div>
-    <div class="sec-label" style="margin-top:0;">評価チェックポイント</div>
-    <ol style="padding:0;display:flex;flex-direction:column;gap:7px;list-style:none;">
-      ${ref.points.map((p,i)=>`
-        <li style="display:flex;gap:8px;font-size:13px;color:var(--text-muted);">
-          <span style="color:var(--orange);font-family:'JetBrains Mono',monospace;font-weight:700;min-width:20px;">${String(i+1).padStart(2,"0")}</span>
-          <span>${p}</span>
-        </li>`).join("")}
-    </ol>`;
+    ${pointsHTML}`;
   document.getElementById("ref-popup").classList.add("open");
 }
 function closeRef(){ document.getElementById("ref-popup").classList.remove("open"); }
@@ -1212,38 +1225,6 @@ async function saveSubjectNameToDB(uid,domainId,si,name){
   },{onConflict:'uid,domain_id,subject_idx'});
 }
 
-async function loadFromDB(){
-  showToast('データを読み込み中...','loading');
-  try {
-    const uid=window.CURRENT_UID;
-    const role=window.CURRENT_ROLE;
-    let subQ=_supabase.from('submissions').select('*');
-    let semQ=_supabase.from('seminar_attendance').select('*');
-    let nmQ =_supabase.from('subject_names').select('*');
-    if(role==='member'){
-      subQ=subQ.eq('uid',uid); semQ=semQ.eq('uid',uid); nmQ=nmQ.eq('uid',uid);
-    }
-    const [{data:submissions},{data:seminars},{data:names}]=
-      await Promise.all([subQ,semQ,nmQ]);
-    if(seminars) seminars.forEach(row=>{
-      if(PROGRESS[row.uid]?.[row.domain_id])
-        PROGRESS[row.uid][row.domain_id].seminarSelected=row.seminar_idx;
-    });
-    if(names) names.forEach(row=>{
-      if(PROGRESS[row.uid]?.[row.domain_id]?.subjects[row.subject_idx])
-        PROGRESS[row.uid][row.domain_id].subjects[row.subject_idx].name=row.name||'';
-    });
-    if(submissions) submissions.forEach(row=>{
-      if(!PROGRESS[row.uid]?.[row.domain_id]) return;
-      const subj=PROGRESS[row.uid][row.domain_id].subjects[row.subject_idx];
-      if(!subj?.views[row.view_id]) return;
-      subj.views[row.view_id].status=row.status;
-      subj.views[row.view_id].feedback=row.feedback||'';
-      subj.views[row.view_id].fileDataUrl=row.image_url||null;
-    });
-    hideToast(); showToast('データを読み込みました','success');
-  } catch(err){ hideToast(); showToast('読み込みエラー: '+err.message,'error'); }
-}
 
 // ================================================================
 // ログイン機能
@@ -1526,8 +1507,10 @@ async function loadFromDB(){
       subQ=subQ.eq('uid',uid); semQ=semQ.eq('uid',uid);
       nmQ=nmQ.eq('uid',uid);  pdQ=pdQ.eq('uid',uid);
     }
-    const [subRes,semRes,nmRes,pdRes]=await Promise.all([subQ,semQ,nmQ,pdQ.catch(()=>({data:null}))]);
-    const submissions=subRes.data, seminars=semRes.data, names=nmRes.data, pDates=pdRes.data;
+    let pDates=null;
+    try { const pdRes=await pdQ; pDates=pdRes.data; } catch(e){ pDates=null; }
+    const [subRes,semRes,nmRes]=await Promise.all([subQ,semQ,nmQ]);
+    const submissions=subRes.data, seminars=semRes.data, names=nmRes.data;
     if(seminars) seminars.forEach(row=>{
       if(PROGRESS[row.uid]?.[row.domain_id])
         PROGRESS[row.uid][row.domain_id].seminarSelected=row.seminar_idx;
