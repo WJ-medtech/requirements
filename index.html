@@ -390,7 +390,7 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
 const DOMAINS = [
   {
     id:"abdomen", name:"腹部", icon:"🫁",
-    subtitle:"FAST（3断面）＋ 胆嚢 ＋ 腎臓（右・左）",
+    subtitle:"FAST（3断面）＋ 胆嚢 ＋ 腎臓（右・左）＋ 腹部大動脈",
     seminarDates:["6/10（水）","6/16（火）"],
     views:[
       {id:"fast_epigastric", label:"FAST 心窩部",    refKey:"fast_epigastric"},
@@ -399,6 +399,7 @@ const DOMAINS = [
       {id:"gallbladder",     label:"胆嚢",           refKey:"gallbladder"},
       {id:"kidney_r",        label:"腎臓（右）",     refKey:"kidney"},
       {id:"kidney_l",        label:"腎臓（左）",     refKey:"kidney"},
+      {id:"aorta",           label:"腹部大動脈",     refKey:"aorta"},
     ]
   },
   {
@@ -445,6 +446,7 @@ const REFS = {
   fast_spleen:    {title:"FAST 脾周囲断面",   points:[]},
   gallbladder:    {title:"胆嚢",              points:[]},
   kidney:         {title:"腎臓",              points:[]},
+  aorta:          {title:"腹部大動脈",        points:[]},
   ivc:            {title:"IVC（下大静脈）",   points:[]},
   plax:           {title:"傍胸骨左縁長軸像", points:[]},
   psax:           {title:"傍胸骨左縁短軸像", points:[]},
@@ -1395,7 +1397,20 @@ async function doLogout(){ await _supabase.auth.signOut(); location.reload(); }
 window.CURRENT_UID  = null;
 window.CURRENT_ROLE = 'member';
 
-_supabase.auth.onAuthStateChange(async (event,session)=>{
+// 30分無操作で自動ログアウト
+let _idleTimer;
+function resetIdleTimer(){
+  clearTimeout(_idleTimer);
+  _idleTimer=setTimeout(async()=>{
+    await _supabase.auth.signOut();
+    alert('30分間操作がなかったため、自動ログアウトしました。');
+    location.reload();
+  }, 30*60*1000);
+}
+['click','keydown','touchstart','scroll'].forEach(ev=>
+  document.addEventListener(ev, resetIdleTimer, {passive:true})
+);
+resetIdleTimer();
   if(session&&session.user){
     const user=session.user;
     const {data:profile}=await _supabase.from('profiles').select('*').eq('id',user.id).single();
