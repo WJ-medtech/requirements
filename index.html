@@ -1234,6 +1234,7 @@ function renderReviewDomains(uid){
       const viewsHTML=domain.views.map(view=>{
         const vs=prog.subjects[si].views[view.id];
         if(!vs) return '';
+        const hasImg=!!vs.fileDataUrl;
         const isPassed = vs.status === 'pass';
         const isKept = vs.status === 'keep';
         return `
