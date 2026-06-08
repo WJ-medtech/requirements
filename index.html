@@ -164,9 +164,23 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
 .rev-comment{width:100%;background:var(--dark);border:1px solid var(--border-light);color:var(--text);font-size:11px;padding:5px 7px;border-radius:2px;font-family:"Noto Sans JP",sans-serif;outline:none;resize:none;}
 .rev-comment:focus{border-color:var(--orange);}
 
-::-webkit-scrollbar{width:4px;}
-::-webkit-scrollbar-track{background:var(--black);}
-::-webkit-scrollbar-thumb{background:var(--orange-dark);border-radius:2px;}
+/* MATRIX TABLE */
+.matrix-table{border-collapse:collapse;font-size:11px;min-width:100%;}
+.matrix-table th{background:var(--dark);border:1px solid var(--border);padding:5px 7px;text-align:center;font-weight:700;white-space:nowrap;position:sticky;top:0;z-index:2;}
+.matrix-table th.sticky-col{position:sticky;left:0;z-index:3;background:var(--dark);}
+.matrix-table td{border:1px solid var(--border);padding:4px 5px;text-align:center;white-space:nowrap;}
+.matrix-table td.sticky-col{position:sticky;left:0;background:var(--card);z-index:1;font-weight:600;text-align:left;padding:4px 8px;}
+.matrix-table tr:hover td{background:rgba(255,255,255,.03);}
+.matrix-table tr:hover td.sticky-col{background:var(--card);}
+.mx-cell{display:inline-block;width:14px;height:14px;border-radius:2px;vertical-align:middle;}
+.mx-pass{background:var(--pass);}
+.mx-keep{background:var(--keep);}
+.mx-pending{background:var(--orange);}
+.mx-un{background:var(--border-light);}
+.mx-ok{background:var(--pass);color:var(--black);font-size:9px;font-weight:700;padding:1px 4px;border-radius:2px;}
+.mx-ng{background:var(--border);color:var(--text-dim);font-size:9px;padding:1px 4px;border-radius:2px;}
+
+::-webkit-scrollbar{width:4px;height:4px;}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 .fade-up{animation:fadeUp .3s ease both;}
 
@@ -259,6 +273,7 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
     <div style="display:flex;gap:2px;">
       <button class="nav-tab active" id="nav-member-tab" onclick="showPage('member')">部員</button>
       <button class="nav-tab" id="nav-reviewer-tab" onclick="showPage('reviewer')">確認者</button>
+      <button class="nav-tab" id="nav-matrix-tab" onclick="showPage('matrix')" style="display:none;">一覧表</button>
       <button onclick="doLogout()" style="padding:5px 10px;font-size:11px;font-weight:600;border:1px solid var(--border-light);border-radius:2px;background:transparent;color:var(--text-muted);cursor:pointer;white-space:nowrap;">ログアウト</button>
     </div>
   </div>
@@ -327,7 +342,34 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
   </div>
 </div>
 
-<!-- POPUP -->
+<!-- ===================== MATRIX PAGE ===================== -->
+<div id="page-matrix" class="page">
+  <div class="main" style="padding-bottom:40px;">
+    <div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+      <div>
+        <div style="font-size:10px;color:var(--orange);text-transform:uppercase;letter-spacing:.1em;margin-bottom:3px;">確認者モード</div>
+        <div style="font-size:18px;font-weight:700;">部員 進捗一覧表</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">全部員の提出状況をひと目で確認できます。</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-muted);">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--pass);"></span>Pass
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-muted);">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--keep);"></span>Keep
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-muted);">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--orange);"></span>判定待ち
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text-muted);">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--border-light);"></span>未提出
+        </div>
+      </div>
+    </div>
+    <div id="matrix-container" style="overflow-x:auto;"></div>
+  </div>
+</div>
+
 <div class="popup-overlay" id="ref-popup" onclick="closeRefOutside(event)">
   <div class="popup-box fade-up">
     <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:13px;">
@@ -348,37 +390,41 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
 const DOMAINS = [
   {
     id:"abdomen", name:"腹部", icon:"🫁",
-    subtitle:"FAST（3断面）＋ 胆嚢 ＋ 腎臓",
+    subtitle:"FAST（3断面）＋ 胆嚢 ＋ 腎臓（右・左）",
     seminarDates:["6/10（水）","6/16（火）"],
     views:[
       {id:"fast_epigastric", label:"FAST 心窩部",    refKey:"fast_epigastric"},
       {id:"fast_morison",    label:"FAST モリソン窩", refKey:"fast_morison"},
       {id:"fast_spleen",     label:"FAST 脾周囲",    refKey:"fast_spleen"},
       {id:"gallbladder",     label:"胆嚢",           refKey:"gallbladder"},
-      {id:"kidney",          label:"腎臓",           refKey:"kidney"},
+      {id:"kidney_r",        label:"腎臓（右）",     refKey:"kidney"},
+      {id:"kidney_l",        label:"腎臓（左）",     refKey:"kidney"},
     ]
   },
   {
     id:"cardiac", name:"心臓・肺・下肢静脈", icon:"❤️",
-    subtitle:"心エコー（4断面）＋ 肺 ＋ DVT（圧迫前後）",
+    subtitle:"心エコー（5断面）＋ 肺（4断面）＋ 膝窩静脈（圧迫前後）",
     seminarDates:["6/30（火）","7/7（火）"],
     views:[
-      {id:"ivc",        label:"IVC",              refKey:"ivc"},
-      {id:"plax",       label:"傍胸骨左縁長軸像",   refKey:"plax"},
-      {id:"psax",       label:"傍胸骨左縁短軸像",   refKey:"psax"},
-      {id:"a4c",        label:"心尖部四腔像",       refKey:"a4c"},
-      {id:"lung",       label:"肺エコー",           refKey:"lung"},
-      {id:"dvt_before", label:"下肢静脈（圧迫前）", refKey:"dvt"},
-      {id:"dvt_after",  label:"下肢静脈（圧迫後）", refKey:"dvt"},
+      {id:"ivc",        label:"IVC",                    refKey:"ivc"},
+      {id:"plax",       label:"傍胸骨左縁長軸像",         refKey:"plax"},
+      {id:"psax",       label:"傍胸骨左縁短軸像",         refKey:"psax"},
+      {id:"a4c",        label:"心尖部四腔像",             refKey:"a4c"},
+      {id:"s4c",        label:"心窩部四腔像",             refKey:"s4c"},
+      {id:"lung_ra",    label:"肺（前胸部上部・右）",      refKey:"lung"},
+      {id:"lung_la",    label:"肺（前胸部上部・左）",      refKey:"lung"},
+      {id:"lung_rb",    label:"肺（側胸部下部・右）",      refKey:"lung"},
+      {id:"lung_lb",    label:"肺（側胸部下部・左）",      refKey:"lung"},
+      {id:"dvt_before", label:"膝窩静脈（圧迫前）",       refKey:"dvt"},
+      {id:"dvt_after",  label:"膝窩静脈（圧迫後）",       refKey:"dvt"},
     ]
   },
   {
     id:"vascular", name:"エコーガイド下血管穿刺", icon:"💉",
-    subtitle:"先生確認後に断面追加予定",
+    subtitle:"練習した日付を3回分入力",
     seminarDates:["6/23（火）","7/15（水）"],
-    views:[
-      {id:"puncture", label:"血管穿刺断面", refKey:"puncture"},
-    ]
+    views:[], // 血管穿刺は練習日入力方式（画像なし）
+    isPracticeLog: true,
   },
   {
     id:"bowel", name:"排便ケアエコー", icon:"🔬",
@@ -391,19 +437,20 @@ const DOMAINS = [
 ];
 
 const REFS = {
-  fast_epigastric:{title:"FAST 心窩部断面",points:["心嚢液の有無を確認（心臓周囲の無エコー域）","剣状突起下からプローブを頭側に傾ける","4腔が見えるよう調整する","呼吸に合わせてプローブ角度を微調整"]},
-  fast_morison:   {title:"FAST モリソン窩", points:["肝臓と右腎の境界に液体貯留がないか確認","右中腋窩線・肋間からアプローチ","腎臓下極まで必ずスキャン","呼気時に描出しやすい"]},
-  fast_spleen:    {title:"FAST 脾周囲断面", points:["脾臓と左腎の間・脾臓上方を確認","左後腋窩線からアプローチ","肋骨陰影を避けて描出","脾周囲液の見落としに注意"]},
-  gallbladder:    {title:"胆嚢",            points:["胆嚢が画面内に収まること","胆嚢壁の描出（正常3mm以下）","内部エコーの有無を確認","断面は問わない（描出できればOK）"]},
-  kidney:         {title:"腎臓",            points:["皮質・髄質の区別が明瞭","腎洞エコーが中央に確認できる","腎臓の長径が計測できる配置","右腎は肝臓との関係を描出"]},
-  ivc:            {title:"IVC（下大静脈）",  points:["剣状突起下から長軸像で描出","右房への合流部を確認","呼吸性変動を観察（IVC collapsibility）","正常径：2.1cm以下"]},
-  plax:           {title:"傍胸骨左縁長軸像",points:["左室・大動脈・僧帽弁が一画面に","右室流出路も描出されること","心膜が全周に確認できること","大動脈弁の開閉が確認できる"]},
-  psax:           {title:"傍胸骨左縁短軸像",points:["左室断面が円形に描出されること","乳頭筋レベルでの描出が基本","壁運動の対称性を評価","右室が左室の左側（画面上）に"]},
-  a4c:            {title:"心尖部四腔像",    points:["4腔が一画面に","心尖部をプローブ直下に","僧帽弁・三尖弁が同一画面に","心室の長軸が画面の長軸と一致"]},
-  lung:           {title:"肺エコー",        points:["胸膜線が水平に描出","Aライン（水平アーティファクト）の確認","Bライン所見の記録（3本以上で陽性）","肋骨陰影間で評価"]},
-  dvt:            {title:"下肢静脈（DVT評価）",points:["大腿静脈の短軸像で評価","圧迫前：静脈内腔の確認","圧迫後：完全閉塞するかを確認","大腿動脈と並走を確認"]},
-  puncture:       {title:"エコーガイド下血管穿刺",points:["※先生確認後に評価基準を追加予定","静脈の短軸または長軸像での描出","針先の描出（可能な場合）","周囲組織との境界が明瞭"]},
-  bowel_tbd:      {title:"排便ケアエコー",  points:["※先生確認後に断面・基準を追加予定"]},
+  fast_epigastric:{title:"FAST 心窩部断面",   points:[]},
+  fast_morison:   {title:"FAST モリソン窩",   points:[]},
+  fast_spleen:    {title:"FAST 脾周囲断面",   points:[]},
+  gallbladder:    {title:"胆嚢",              points:[]},
+  kidney:         {title:"腎臓",              points:[]},
+  ivc:            {title:"IVC（下大静脈）",   points:[]},
+  plax:           {title:"傍胸骨左縁長軸像", points:[]},
+  psax:           {title:"傍胸骨左縁短軸像", points:[]},
+  a4c:            {title:"心尖部四腔像",      points:[]},
+  s4c:            {title:"心窩部四腔像",      points:[]},
+  lung:           {title:"肺エコー",          points:[]},
+  dvt:            {title:"膝窩静脈（DVT評価）",points:[]},
+  puncture:       {title:"エコーガイド下血管穿刺",points:[]},
+  bowel_tbd:      {title:"排便ケアエコー",    points:[]},
 };
 
 // ================================================================
@@ -419,13 +466,15 @@ const CURRENT_UID = "m001";
 const PROGRESS = {};
 function initProgress() {
   MEMBERS.forEach(m => {
+    if(PROGRESS[m.uid]) return; // 既に初期化済みならスキップ
     PROGRESS[m.uid] = {};
     DOMAINS.forEach(d => {
       PROGRESS[m.uid][d.id] = {
         seminarSelected: null,
         subjects: [0,1,2].map(() => ({
           name: "",
-          views: Object.fromEntries(d.views.map(v => [v.id, {status:"unsubmitted", feedback:"", fileDataUrl:null}]))
+          views: Object.fromEntries(d.views.map(v => [v.id, {status:"unsubmitted", feedback:"", fileDataUrl:null}])),
+          practiceDates: d.isPracticeLog ? ["","",""] : null, // 血管穿刺用
         }))
       };
     });
@@ -438,25 +487,45 @@ function initProgress() {
 const SL = {unsubmitted:"未提出", pending:"判定待ち", pass:"Pass", keep:"Keep Trying"};
 const SC = {unsubmitted:"sbadge s-un", pending:"sbadge s-pe", pass:"sbadge s-pa", keep:"sbadge s-ke"};
 
-function totalViews(){ return DOMAINS.reduce((a,d) => a + d.views.length * 3, 0); }
+function totalViews(){ return DOMAINS.filter(d=>!d.isPracticeLog).reduce((a,d) => a + d.views.length * 3, 0); }
 
 function passCount(uid){
   let n=0;
-  DOMAINS.forEach(d => PROGRESS[uid][d.id].subjects.forEach(s =>
-    d.views.forEach(v => { if(s.views[v.id].status==="pass") n++; })
+  DOMAINS.filter(d=>!d.isPracticeLog).forEach(d => PROGRESS[uid]?.[d.id]?.subjects.forEach(s =>
+    d.views.forEach(v => { if(s.views[v.id]?.status==="pass") n++; })
   ));
   return n;
 }
-function seminarCount(uid){ return DOMAINS.filter(d => PROGRESS[uid][d.id].seminarSelected !== null).length; }
-function canEntry(uid){ return passCount(uid)===totalViews() && seminarCount(uid)===DOMAINS.length; }
+function practiceComplete(uid,domainId){
+  // 血管穿刺：3被検者全員が3日入力済みならtrue
+  const prog=PROGRESS[uid]?.[domainId];
+  if(!prog) return false;
+  return prog.subjects.every(s => s.practiceDates && s.practiceDates.every(d=>d.trim()!==""));
+}
+function seminarCount(uid){ return DOMAINS.filter(d => PROGRESS[uid]?.[d.id]?.seminarSelected !== null).length; }
+function canEntry(uid){
+  if(!PROGRESS[uid]) return false;
+  const imagePassed = passCount(uid)===totalViews();
+  const vascularOK = practiceComplete(uid,'vascular');
+  const seminarsOK = seminarCount(uid)===DOMAINS.length;
+  return imagePassed && vascularOK && seminarsOK;
+}
 function subjectAllPass(uid,domainId,si){
   const d = DOMAINS.find(x=>x.id===domainId);
-  return d.views.every(v => PROGRESS[uid][domainId].subjects[si].views[v.id].status==="pass");
+  if(d.isPracticeLog){
+    const prog=PROGRESS[uid]?.[domainId];
+    return prog?.subjects[si]?.practiceDates?.every(dt=>dt.trim()!=="") || false;
+  }
+  return d.views.every(v => PROGRESS[uid]?.[domainId]?.subjects[si]?.views[v.id]?.status==="pass");
 }
 function domainPassCount(uid,domainId){
   const d = DOMAINS.find(x=>x.id===domainId);
+  if(d.isPracticeLog){
+    const ok = practiceComplete(uid,domainId);
+    return {n: ok?1:0, total:1};
+  }
   let n=0, total=d.views.length*3;
-  PROGRESS[uid][domainId].subjects.forEach(s => d.views.forEach(v => { if(s.views[v.id].status==="pass") n++; }));
+  PROGRESS[uid]?.[domainId]?.subjects.forEach(s => d.views.forEach(v => { if(s.views[v.id]?.status==="pass") n++; }));
   return {n, total};
 }
 
@@ -468,19 +537,22 @@ function updateCountdown(){
   document.getElementById("cd-days").textContent = Math.max(0, Math.ceil(diff/86400000));
 }
 function updateProgressBar(){
-  const pass=passCount(window.CURRENT_UID), total=totalViews();
+  const uid=window.CURRENT_UID;
+  if(!uid||!PROGRESS[uid]) return;
+  const pass=passCount(uid), total=totalViews();
   const pct = total>0 ? Math.round(pass/total*100) : 0;
   document.getElementById("pass-count").textContent = pass;
   document.getElementById("total-count").textContent = total;
   document.getElementById("prog-fill").style.width = pct+"%";
   const btn=document.getElementById("entry-btn"), hint=document.getElementById("entry-hint");
-  if(canEntry(window.CURRENT_UID)){
+  if(canEntry(uid)){
     btn.disabled=false;
     hint.textContent="✅ 全条件達成！エントリーできます";
     hint.style.color="var(--pass)";
   } else {
     btn.disabled=true;
-    hint.textContent=`🔒 セミナー受講 ${seminarCount(window.CURRENT_UID)}/${DOMAINS.length}　キー画像Pass ${pass}/${total}`;
+    const vOK=practiceComplete(uid,'vascular')?"✓":"×";
+    hint.textContent=`🔒 セミナー受講 ${seminarCount(uid)}/${DOMAINS.length}　キー画像Pass ${pass}/${total}　血管穿刺練習 ${vOK}`;
     hint.style.color="var(--text-dim)";
   }
 }
@@ -497,12 +569,20 @@ DOMAINS.forEach(d => { activeSubject[d.id]=0; });
 function renderDomainList(){
   const container=document.getElementById("domain-list");
   container.innerHTML="";
+  const uid=window.CURRENT_UID;
+  if(!uid || !PROGRESS[uid]) return; // 未初期化ガード
   DOMAINS.forEach((domain,di) => {
-    const prog=PROGRESS[window.CURRENT_UID][domain.id];
+    const prog=PROGRESS[uid][domain.id];
     const card=document.createElement("div");
     card.className="domain-card fade-up";
     card.id=`dc-${domain.id}`;
     card.style.animationDelay=`${di*0.07}s`;
+
+    // 血管穿刺は練習日入力UIを使う
+    const innerBodyHTML = domain.isPracticeLog
+      ? renderPracticeLogBody(domain, uid)
+      : renderImageBody(domain, uid);
+
     card.innerHTML=`
       <div class="domain-header" onclick="toggleDomain('${domain.id}')">
         <div class="domain-num">${String(di+1).padStart(2,"00")}</div>
@@ -525,31 +605,78 @@ function renderDomainList(){
             `).join("")}
             <span style="font-size:11px;color:var(--text-dim);">どちらか1つ受講</span>
           </div>
-          <div class="sec-label">被検者 × キー画像</div>
-          <div class="subject-tabs" id="stabs-${domain.id}">
-            ${[0,1,2].map(i=>`
-              <button id="stab-${domain.id}-${i}" class="subject-tab ${i===0?'active':''}"
-                onclick="switchSubject('${domain.id}',${i})">被検者 ${i+1}</button>
-            `).join("")}
-          </div>
-          ${[0,1,2].map(si=>`
-            <div id="spanel-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
-              <div style="margin-bottom:10px;">
-                <input class="field" type="text"
-                  placeholder="被検者 ${si+1} のイニシャルまたはID"
-                  value="${prog.subjects[si].name}"
-                  onchange="updateSubjectName('${domain.id}',${si},this.value)"
-                  style="max-width:280px;">
-              </div>
-              <div class="img-grid" id="ig-${domain.id}-${si}"></div>
-            </div>
-          `).join("")}
+          ${innerBodyHTML}
         </div>
       </div>`;
     container.appendChild(card);
-    [0,1,2].forEach(si => renderImageGrid(domain.id, si));
+    if(!domain.isPracticeLog){
+      [0,1,2].forEach(si => renderImageGrid(domain.id, si));
+    }
     updateDomainMeta(domain.id);
   });
+}
+
+function renderImageBody(domain, uid){
+  const prog=PROGRESS[uid][domain.id];
+  return `
+    <div class="sec-label">被検者 × キー画像</div>
+    <div class="subject-tabs" id="stabs-${domain.id}">
+      ${[0,1,2].map(i=>`
+        <button id="stab-${domain.id}-${i}" class="subject-tab ${i===0?'active':''}"
+          onclick="switchSubject('${domain.id}',${i})">被検者 ${i+1}</button>
+      `).join("")}
+    </div>
+    ${[0,1,2].map(si=>`
+      <div id="spanel-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
+        <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px;">
+          <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">撮像日</span>
+          <input class="field" type="date"
+            value="${prog.subjects[si].name}"
+            onchange="updateSubjectName('${domain.id}',${si},this.value)"
+            style="max-width:200px;">
+        </div>
+        <div class="img-grid" id="ig-${domain.id}-${si}"></div>
+      </div>
+    `).join("")}`;
+}
+
+function renderPracticeLogBody(domain, uid){
+  const prog=PROGRESS[uid][domain.id];
+  return `
+    <div class="sec-label">練習記録（被検者ごとに練習日を入力）</div>
+    <div class="subject-tabs" id="stabs-${domain.id}">
+      ${[0,1,2].map(i=>`
+        <button id="stab-${domain.id}-${i}" class="subject-tab ${i===0?'active':''}"
+          onclick="switchSubject('${domain.id}',${i})">被検者 ${i+1}</button>
+      `).join("")}
+    </div>
+    ${[0,1,2].map(si=>`
+      <div id="spanel-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
+        <div style="margin-bottom:10px;display:flex;align-items:center;gap:8px;">
+          <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">撮像日</span>
+          <input class="field" type="date"
+            value="${prog.subjects[si].name}"
+            onchange="updateSubjectName('${domain.id}',${si},this.value)"
+            style="max-width:200px;">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;max-width:320px;" id="pdlist-${domain.id}-${si}">
+          ${(prog.subjects[si].practiceDates||["","",""]).map((d,di)=>`
+            <div style="display:flex;align-items:center;gap:8px;" id="pdrow-${domain.id}-${si}-${di}">
+              <span style="font-size:11px;color:var(--text-muted);min-width:44px;">練習 ${di+1}</span>
+              <input class="field" type="date"
+                value="${d}"
+                onchange="updatePracticeDate('${domain.id}',${si},${di},this.value)"
+                style="max-width:200px;">
+            </div>
+          `).join("")}
+        </div>
+        <button onclick="addPracticeDate('${domain.id}',${si})"
+          style="margin-top:8px;font-size:11px;padding:5px 12px;background:var(--dark);border:1px dashed var(--border-light);color:var(--text-muted);border-radius:2px;cursor:pointer;">
+          ＋ 練習日を追加
+        </button>
+        <div id="pd-status-${domain.id}-${si}" style="font-size:11px;margin-top:6px;"></div>
+      </div>
+    `).join("")}`;
 }
 
 function renderImageGrid(domainId, si){
@@ -595,7 +722,9 @@ function renderImageGrid(domainId, si){
 
 function updateDomainMeta(domainId){
   const domain=DOMAINS.find(d=>d.id===domainId);
-  const prog=PROGRESS[window.CURRENT_UID][domain.id];
+  const uid=window.CURRENT_UID;
+  if(!uid||!PROGRESS[uid]||!PROGRESS[uid][domainId]) return;
+  const prog=PROGRESS[uid][domain.id];
   const el=document.getElementById(`dmeta-${domainId}`);
   if(!el) return;
 
@@ -605,11 +734,19 @@ function updateDomainMeta(domainId){
 
   const subjHTML = [0,1,2].map(si => {
     const name=prog.subjects[si].name||`被検者${si+1}`;
-    const allPass=subjectAllPass(window.CURRENT_UID,domainId,si);
-    const dots=domain.views.map(v=>{
-      const s=prog.subjects[si].views[v.id].status;
-      return `<div class="subj-dot ${s==="pass"?"pa":s==="keep"?"ke":s==="pending"?"pe":""}"></div>`;
-    }).join("");
+    const allPass=subjectAllPass(uid,domainId,si);
+    let dots="";
+    if(!domain.isPracticeLog){
+      dots=domain.views.map(v=>{
+        const s=prog.subjects[si].views[v.id]?.status||"unsubmitted";
+        return `<div class="subj-dot ${s==="pass"?"pa":s==="keep"?"ke":s==="pending"?"pe":""}"></div>`;
+      }).join("");
+    } else {
+      const dates=prog.subjects[si].practiceDates||[];
+      dots=dates.map(d=>
+        `<div class="subj-dot ${d.trim()?"pa":""}"></div>`
+      ).join("");
+    }
     return `<div style="display:flex;align-items:center;gap:4px;">
       ${allPass?`<span class="done-badge" style="font-size:9px;padding:1px 5px;">✓</span>`:`<span class="tag" style="font-size:9px;padding:1px 5px;">${si+1}</span>`}
       <span style="font-size:10px;color:var(--text-dim);max-width:55px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}</span>
@@ -624,14 +761,14 @@ function updateDomainMeta(domainId){
     const tab=document.getElementById(`stab-${domainId}-${si}`);
     if(!tab) return;
     const name=prog.subjects[si].name;
-    const allPass=subjectAllPass(window.CURRENT_UID,domainId,si);
+    const allPass=subjectAllPass(uid,domainId,si);
     const isActive=activeSubject[domainId]===si;
     tab.textContent=name?name:`被検者 ${si+1}`;
     tab.className=`subject-tab ${isActive?"active":""} ${allPass?"complete":""}`;
   });
 
   // Card border
-  const {n,total}=domainPassCount(window.CURRENT_UID,domainId);
+  const {n,total}=domainPassCount(uid,domainId);
   const card=document.getElementById(`dc-${domainId}`);
   if(card) card.classList.toggle("completed", n===total && prog.seminarSelected!==null);
 
@@ -668,17 +805,76 @@ function updateSubjectName(domainId,si,val){
   updateDomainMeta(domainId);
   saveSubjectNameToDB(uid, domainId, si, val);
 }
+function addPracticeDate(domainId,si){
+  const uid=window.CURRENT_UID;
+  const dates=PROGRESS[uid][domainId].subjects[si].practiceDates;
+  const di=dates.length;
+  dates.push("");
+  const list=document.getElementById(`pdlist-${domainId}-${si}`);
+  if(!list) return;
+  const row=document.createElement("div");
+  row.id=`pdrow-${domainId}-${si}-${di}`;
+  row.style.cssText="display:flex;align-items:center;gap:8px;";
+  row.innerHTML=`
+    <span style="font-size:11px;color:var(--text-muted);min-width:44px;">練習 ${di+1}</span>
+    <input class="field" type="date"
+      value=""
+      onchange="updatePracticeDate('${domainId}',${si},${di},this.value)"
+      style="max-width:200px;">`;
+  list.appendChild(row);
+}
+function updatePracticeDate(domainId,si,di,val){
+  const uid=window.CURRENT_UID;
+  const dates=PROGRESS[uid][domainId].subjects[si].practiceDates;
+  while(dates.length<=di) dates.push("");
+  dates[di]=val;
+  // 最初の3件が揃っているかでステータス表示
+  const first3=dates.slice(0,3);
+  const allFilled=first3.every(d=>d.trim()!=="");
+  const statusEl=document.getElementById(`pd-status-${domainId}-${si}`);
+  const total=dates.filter(d=>d.trim()!=="").length;
+  if(statusEl) statusEl.innerHTML=allFilled
+    ? `<span class="sbadge s-pa">✓ ${total}回練習済み</span>`
+    : `<span class="sbadge s-un">あと${3-total}日入力で完了</span>`;
+  updateDomainMeta(domainId);
+  savePracticeDateToDB(uid,domainId,si,di,val);
+}
+
+// ================================================================
+// 画像圧縮（Supabase無料枠節約：最大800px・品質70%）
+// ================================================================
+function compressImage(file, maxPx=800, quality=0.70){
+  return new Promise((resolve)=>{
+    const img=new Image();
+    const reader=new FileReader();
+    reader.onload=e=>{ img.src=e.target.result; };
+    img.onload=()=>{
+      const canvas=document.createElement("canvas");
+      let w=img.width, h=img.height;
+      if(w>maxPx||h>maxPx){
+        if(w>h){ h=Math.round(h*maxPx/w); w=maxPx; }
+        else { w=Math.round(w*maxPx/h); h=maxPx; }
+      }
+      canvas.width=w; canvas.height=h;
+      canvas.getContext("2d").drawImage(img,0,0,w,h);
+      canvas.toBlob(blob=>resolve(new File([blob],file.name.replace(/\.[^.]+$/,".jpg"),{type:"image/jpeg"})),"image/jpeg",quality);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 async function handleUpload(domainId,si,viewId,input){
   const file=input.files[0]; if(!file) return;
   const uid = window.CURRENT_UID;
-  showToast('画像をアップロード中...','loading');
+  showToast('画像を処理中...','loading');
   try {
-    const localUrl=URL.createObjectURL(file);
+    const compressed = await compressImage(file);
+    const localUrl=URL.createObjectURL(compressed);
     const prev=document.getElementById(`prev-${domainId}-${si}-${viewId}`);
     const ph=document.getElementById(`ph-${domainId}-${si}-${viewId}`);
     if(prev){prev.src=localUrl;prev.style.display="block";}
     if(ph) ph.style.display="none";
-    const imageUrl=await uploadImageToStorage(uid,domainId,si,viewId,file);
+    const imageUrl=await uploadImageToStorage(uid,domainId,si,viewId,compressed);
     await saveSubmissionToDB(uid,domainId,si,viewId,'pending','判定待ちです。担当者が確認します。',imageUrl);
     const vs=PROGRESS[uid][domainId].subjects[si].views[viewId];
     vs.fileDataUrl=imageUrl; vs.status="pending"; vs.feedback="判定待ちです。担当者が確認します。";
@@ -730,12 +926,11 @@ function closeRefOutside(e){ if(e.target===document.getElementById("ref-popup"))
 function showPage(page){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
   document.getElementById(`page-${page}`).classList.add("active");
-  document.querySelectorAll(".nav-tab").forEach(t=>{
-    t.classList.toggle("active",
-      (page==="member"&&t.id==="nav-member-tab")||
-      (page==="reviewer"&&t.id==="nav-reviewer-tab"));
-  });
+  document.querySelectorAll(".nav-tab").forEach(t=>t.classList.remove("active"));
+  const tabMap={member:"nav-member-tab",reviewer:"nav-reviewer-tab",matrix:"nav-matrix-tab"};
+  if(tabMap[page]) document.getElementById(tabMap[page])?.classList.add("active");
   if(page==="reviewer") renderMemberList();
+  if(page==="matrix") renderMatrix();
 }
 
 // ================================================================
@@ -746,7 +941,7 @@ function renderMemberList(){
   container.innerHTML="";
   MEMBERS.forEach(m=>{
     const pass=passCount(m.uid), total=totalViews();
-    const pct=Math.round(pass/total*100);
+    const pct=total>0?Math.round(pass/total*100):0;
     const div=document.createElement("div");
     div.className="member-card";
     div.onclick=()=>selectMember(m.uid);
@@ -767,6 +962,102 @@ function renderMemberList(){
     container.appendChild(div);
   });
 }
+
+// ================================================================
+// MATRIX (EXCEL風一覧表)
+// ================================================================
+function renderMatrix(){
+  const container=document.getElementById("matrix-container");
+  if(!container) return;
+  const imageDomains=DOMAINS.filter(d=>!d.isPracticeLog && d.views.length>0);
+  const vascularDomain=DOMAINS.find(d=>d.isPracticeLog);
+
+  let headerRow1='<tr><th class="sticky-col" rowspan="3" style="min-width:80px;">部員</th>';
+  let headerRow2='';
+  let headerRow3='';
+
+  // セミナー
+  headerRow1+=`<th colspan="${DOMAINS.length}" style="color:var(--orange);border-bottom:none;">セミナー</th>`;
+  DOMAINS.forEach(d=>{
+    headerRow2+=`<th rowspan="2" title="${d.name}" style="font-size:10px;max-width:50px;">${d.icon}</th>`;
+  });
+
+  // 画像断面
+  imageDomains.forEach(d=>{
+    const cols=d.views.length*3;
+    headerRow1+=`<th colspan="${cols}" style="color:var(--orange);border-bottom:none;">${d.icon} ${d.name}</th>`;
+    d.views.forEach(v=>{
+      headerRow2+=`<th colspan="3" title="${v.label}" style="font-size:10px;">${v.label.length>7?v.label.slice(0,7)+"…":v.label}</th>`;
+      headerRow3+="<th style='font-size:9px;color:var(--text-dim);'>①</th><th style='font-size:9px;color:var(--text-dim);'>②</th><th style='font-size:9px;color:var(--text-dim);'>③</th>";
+    });
+  });
+
+  // 血管穿刺
+  if(vascularDomain){
+    headerRow1+=`<th colspan="9" style="color:var(--orange);border-bottom:none;">${vascularDomain.icon} 血管穿刺</th>`;
+    [0,1,2].forEach(si=>{
+      headerRow2+=`<th colspan="3" style="font-size:10px;">被検者${si+1}</th>`;
+      [0,1,2].forEach(di=>{
+        headerRow3+=`<th style="font-size:9px;color:var(--text-dim);">練${di+1}</th>`;
+      });
+    });
+  }
+  headerRow1+="</tr>";
+
+  // データ行
+  let bodyRows="";
+  MEMBERS.forEach(m=>{
+    const prog=PROGRESS[m.uid];
+    if(!prog) return;
+    bodyRows+=`<tr>`;
+    bodyRows+=`<td class="sticky-col">${m.name}<br><span style="font-size:9px;color:var(--text-dim);">${m.year}年</span></td>`;
+
+    // セミナー
+    DOMAINS.forEach(d=>{
+      const sel=prog[d.id]?.seminarSelected;
+      bodyRows+=sel!=null
+        ?`<td><span class="mx-ok">✓</span></td>`
+        :`<td><span class="mx-ng">-</span></td>`;
+    });
+
+    // 画像断面
+    imageDomains.forEach(d=>{
+      d.views.forEach(v=>{
+        [0,1,2].forEach(si=>{
+          const st=prog[d.id]?.subjects[si]?.views[v.id]?.status||"unsubmitted";
+          const cls=st==="pass"?"mx-pass":st==="keep"?"mx-keep":st==="pending"?"mx-pending":"mx-un";
+          const title={"pass":"Pass","keep":"Keep Trying","pending":"判定待ち","unsubmitted":"未提出"}[st];
+          bodyRows+=`<td><span class="mx-cell ${cls}" title="${title}"></span></td>`;
+        });
+      });
+    });
+
+    // 血管穿刺
+    if(vascularDomain){
+      [0,1,2].forEach(si=>{
+        const dates=prog[vascularDomain.id]?.subjects[si]?.practiceDates||[];
+        [0,1,2].forEach(di=>{
+          const dv=dates[di]||"";
+          bodyRows+=dv
+            ?`<td style="font-size:9px;color:var(--pass);">${dv.slice(5)}</td>`
+            :`<td><span class="mx-cell mx-un"></span></td>`;
+        });
+      });
+    }
+    bodyRows+=`</tr>`;
+  });
+
+  container.innerHTML=`
+    <table class="matrix-table">
+      <thead>
+        ${headerRow1}
+        <tr>${headerRow2}</tr>
+        <tr>${headerRow3}</tr>
+      </thead>
+      <tbody>${bodyRows}</tbody>
+    </table>`;
+}
+
 
 function selectMember(uid){
   const member=MEMBERS.find(m=>m.uid===uid);
@@ -1019,6 +1310,7 @@ _supabase.auth.onAuthStateChange(async (event,session)=>{
     window.CURRENT_ROLE = role;
     document.getElementById('auth-screen').classList.remove('active');
     document.getElementById('nav-reviewer-tab').style.display = role==='reviewer' ? '' : 'none';
+    document.getElementById('nav-matrix-tab').style.display = role==='reviewer' ? '' : 'none';
 
     // MEMBERSを構築
     if(role==='reviewer'){
@@ -1046,9 +1338,9 @@ _supabase.auth.onAuthStateChange(async (event,session)=>{
     else { renderDomainList(); showPage('member'); }
 
     await loadFromDB();
-    renderDomainList();
+    if(role!=='reviewer') renderDomainList();
     updateProgressBar();
-    if(role==='reviewer') renderMemberList();
+    if(role==='reviewer'){ renderMemberList(); renderMatrix(); }
   } else {
     document.getElementById('auth-screen').classList.add('active');
   }
@@ -1062,32 +1354,18 @@ function switchSubject(domainId,si){
   updateDomainMeta(domainId);
 }
 function selectSeminar(domainId,idx){
-  PROGRESS[window.CURRENT_UID][domainId].seminarSelected=idx;
+  const uid = window.CURRENT_UID;
+  PROGRESS[uid][domainId].seminarSelected=idx;
   DOMAINS.find(d=>d.id===domainId).seminarDates.forEach((_,i)=>{
     const btn=document.getElementById(`sb-${domainId}-${i}`);
     if(btn) btn.className=`sem-btn ${i===idx?"selected":""}`;
   });
   updateDomainMeta(domainId);
+  saveSeminarToDB(uid, domainId, idx);
 }
 function updateSubjectName(domainId,si,val){
   PROGRESS[window.CURRENT_UID][domainId].subjects[si].name=val;
   updateDomainMeta(domainId);
-}
-function handleUpload(domainId,si,viewId,input){
-  const file=input.files[0]; if(!file) return;
-  const reader=new FileReader();
-  reader.onload=e=>{
-    const url=e.target.result;
-    const vs=PROGRESS[window.CURRENT_UID][domainId].subjects[si].views[viewId];
-    vs.fileDataUrl=url; vs.status="pending"; vs.feedback="判定待ちです。担当者が確認します。";
-    const prev=document.getElementById(`prev-${domainId}-${si}-${viewId}`);
-    const ph=document.getElementById(`ph-${domainId}-${si}-${viewId}`);
-    if(prev){prev.src=url;prev.style.display="block";}
-    if(ph) ph.style.display="none";
-    refreshImageStatus(domainId,si,viewId);
-    updateDomainMeta(domainId);
-  };
-  reader.readAsDataURL(file);
 }
 function refreshImageStatus(domainId,si,viewId){
   const vs=PROGRESS[window.CURRENT_UID][domainId].subjects[si].views[viewId];
@@ -1106,20 +1384,23 @@ function refreshImageStatus(domainId,si,viewId){
 function openRef(refKey){
   const ref=REFS[refKey]; if(!ref) return;
   document.getElementById("ref-title").textContent=ref.title;
+  const pointsHTML = ref.points.length>0
+    ? `<div class="sec-label" style="margin-top:12px;">評価チェックポイント</div>
+       <ol style="padding:0;display:flex;flex-direction:column;gap:7px;list-style:none;">
+         ${ref.points.map((p,i)=>`
+           <li style="display:flex;gap:8px;font-size:13px;color:var(--text-muted);">
+             <span style="color:var(--orange);font-family:'JetBrains Mono',monospace;font-weight:700;min-width:20px;">${String(i+1).padStart(2,"0")}</span>
+             <span>${p}</span>
+           </li>`).join("")}
+       </ol>`
+    : `<div style="font-size:12px;color:var(--text-dim);text-align:center;padding:16px 0;">評価基準は準備中です</div>`;
   document.getElementById("ref-body").innerHTML=`
     <div style="background:var(--black);border:1px dashed var(--border-light);border-radius:3px;
-      height:80px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;gap:8px;">
+      height:80px;display:flex;align-items:center;justify-content:center;gap:8px;">
       <span style="font-size:20px;opacity:.3;">🖼️</span>
-      <div style="font-size:11px;color:var(--text-dim);">お手本画像<br>（Supabase連携後に表示）</div>
+      <div style="font-size:11px;color:var(--text-dim);">見本画像（準備中）</div>
     </div>
-    <div class="sec-label" style="margin-top:0;">評価チェックポイント</div>
-    <ol style="padding:0;display:flex;flex-direction:column;gap:7px;list-style:none;">
-      ${ref.points.map((p,i)=>`
-        <li style="display:flex;gap:8px;font-size:13px;color:var(--text-muted);">
-          <span style="color:var(--orange);font-family:'JetBrains Mono',monospace;font-weight:700;min-width:20px;">${String(i+1).padStart(2,"0")}</span>
-          <span>${p}</span>
-        </li>`).join("")}
-    </ol>`;
+    ${pointsHTML}`;
   document.getElementById("ref-popup").classList.add("open");
 }
 function closeRef(){ document.getElementById("ref-popup").classList.remove("open"); }
@@ -1142,32 +1423,6 @@ function showPage(page){
 // ================================================================
 // REVIEWER PAGE
 // ================================================================
-function renderMemberList(){
-  const container=document.getElementById("member-list");
-  container.innerHTML="";
-  MEMBERS.forEach(m=>{
-    const pass=passCount(m.uid), total=totalViews();
-    const pct=Math.round(pass/total*100);
-    const div=document.createElement("div");
-    div.className="member-card";
-    div.onclick=()=>selectMember(m.uid);
-    div.innerHTML=`
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-        <div style="width:32px;height:32px;border-radius:50%;background:var(--orange);
-          display:flex;align-items:center;justify-content:center;
-          font-family:'Bebas Neue',sans-serif;font-size:15px;color:var(--black);">${m.name[0]}</div>
-        <div>
-          <div style="font-size:14px;font-weight:700;">${m.name}</div>
-          <div style="font-size:11px;color:var(--text-muted);">${m.year}年生</div>
-        </div>
-        <div style="margin-left:auto;">
-          ${pass===total?`<span class="done-badge">✓ 全Pass</span>`:`<span class="tag">${pass}/${total} Pass</span>`}
-        </div>
-      </div>
-      <div class="prog-track" style="height:6px;"><div class="prog-fill" style="width:${pct}%"></div></div>`;
-    container.appendChild(div);
-  });
-}
 
 function selectMember(uid){
   const member=MEMBERS.find(m=>m.uid===uid);
@@ -1182,56 +1437,6 @@ function closeReview(){
   renderMemberList();
 }
 
-function renderReviewDomains(uid){
-  const container=document.getElementById("review-domain-list");
-  container.innerHTML="";
-  DOMAINS.forEach(domain=>{
-    const prog=PROGRESS[uid][domain.id];
-    const sec=document.createElement("div");
-    sec.style.marginBottom="20px";
-    const tabsHTML=[0,1,2].map(si=>{
-      const name=prog.subjects[si].name||`被検者${si+1}`;
-      return `<button id="rvtab-${uid}-${domain.id}-${si}"
-        class="subject-tab ${si===0?'active':''}"
-        onclick="switchReviewSubject('${uid}','${domain.id}',${si})">${name}</button>`;
-    }).join("");
-    const panelsHTML=[0,1,2].map(si=>{
-      const viewsHTML=domain.views.map(view=>{
-        const vs=prog.subjects[si].views[view.id];
-        const hasImg=!!vs.fileDataUrl;
-        return `
-          <div class="rev-img-card" id="rvic-${uid}-${domain.id}-${si}-${view.id}">
-            <div class="rev-img-top">
-              ${hasImg?`<img src="${vs.fileDataUrl}" style="width:100%;height:100%;object-fit:cover;">`:
-                `<div style="font-size:10px;color:var(--text-dim);text-align:center;padding:8px;">未提出</div>`}
-            </div>
-            <div class="rev-img-bottom">
-              <div style="font-size:11px;font-weight:700;">${view.label}</div>
-              <span id="rvst-${uid}-${domain.id}-${si}-${view.id}" class="${SC[vs.status]}">${SL[vs.status]}</span>
-              ${hasImg?`
-                <textarea class="rev-comment" rows="2"
-                  id="rvcmt-${uid}-${domain.id}-${si}-${view.id}"
-                  placeholder="フィードバックを入力...">${vs.feedback}</textarea>
-                <div class="rev-actions">
-                  <button class="rev-btn rev-pass"
-                    onclick="reviewSet('${uid}','${domain.id}',${si},'${view.id}','pass')">✓ Pass</button>
-                  <button class="rev-btn rev-keep"
-                    onclick="reviewSet('${uid}','${domain.id}',${si},'${view.id}','keep')">↩ Keep</button>
-                </div>`:""}
-            </div>
-          </div>`;
-      }).join("");
-      return `<div id="rvpanel-${uid}-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
-        <div class="rev-img-grid">${viewsHTML}</div>
-      </div>`;
-    }).join("");
-    sec.innerHTML=`
-      <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--orange);">${domain.icon} ${domain.name}</div>
-      <div class="subject-tabs">${tabsHTML}</div>
-      ${panelsHTML}`;
-    container.appendChild(sec);
-  });
-}
 
 function switchReviewSubject(uid,domainId,si){
   [0,1,2].forEach(i=>{
@@ -1242,20 +1447,6 @@ function switchReviewSubject(uid,domainId,si){
   });
 }
 
-function reviewSet(uid,domainId,si,viewId,status){
-  const cmt=document.getElementById(`rvcmt-${uid}-${domainId}-${si}-${viewId}`);
-  const comment=cmt?cmt.value:"";
-  const vs=PROGRESS[uid][domainId].subjects[si].views[viewId];
-  vs.status=status;
-  vs.feedback=comment||(status==="pass"?"よく描出できています！":"もう一度練習してみてください。");
-  const rvst=document.getElementById(`rvst-${uid}-${domainId}-${si}-${viewId}`);
-  if(rvst){rvst.className=SC[status];rvst.textContent=SL[status];}
-  if(uid===window.CURRENT_UID){
-    refreshImageStatus(domainId,si,viewId);
-    updateDomainMeta(domainId);
-  }
-  renderMemberList();
-}
 
 // ================================================================
 // ENTRY
@@ -1314,6 +1505,14 @@ async function saveSubjectNameToDB(uid,domainId,si,name){
     uid, domain_id:domainId, subject_idx:si, name, updated_at:new Date().toISOString(),
   },{onConflict:'uid,domain_id,subject_idx'});
 }
+async function savePracticeDateToDB(uid,domainId,si,di,dateVal){
+  try {
+    await _supabase.from('practice_dates').upsert({
+      uid, domain_id:domainId, subject_idx:si, date_idx:di, practice_date:dateVal||null,
+      updated_at:new Date().toISOString(),
+    },{onConflict:'uid,domain_id,subject_idx,date_idx'});
+  } catch(e){ /* テーブル未作成の場合は無視 */ }
+}
 async function loadFromDB(){
   showToast('データを読み込み中...','loading');
   try {
@@ -1322,8 +1521,13 @@ async function loadFromDB(){
     let subQ=_supabase.from('submissions').select('*');
     let semQ=_supabase.from('seminar_attendance').select('*');
     let nmQ =_supabase.from('subject_names').select('*');
-    if(role==='member'){ subQ=subQ.eq('uid',uid); semQ=semQ.eq('uid',uid); nmQ=nmQ.eq('uid',uid); }
-    const [{data:submissions},{data:seminars},{data:names}]=await Promise.all([subQ,semQ,nmQ]);
+    let pdQ =_supabase.from('practice_dates').select('*');
+    if(role==='member'){
+      subQ=subQ.eq('uid',uid); semQ=semQ.eq('uid',uid);
+      nmQ=nmQ.eq('uid',uid);  pdQ=pdQ.eq('uid',uid);
+    }
+    const [subRes,semRes,nmRes,pdRes]=await Promise.all([subQ,semQ,nmQ,pdQ.catch(()=>({data:null}))]);
+    const submissions=subRes.data, seminars=semRes.data, names=nmRes.data, pDates=pdRes.data;
     if(seminars) seminars.forEach(row=>{
       if(PROGRESS[row.uid]?.[row.domain_id])
         PROGRESS[row.uid][row.domain_id].seminarSelected=row.seminar_idx;
@@ -1339,6 +1543,10 @@ async function loadFromDB(){
       subj.views[row.view_id].status=row.status;
       subj.views[row.view_id].feedback=row.feedback||'';
       subj.views[row.view_id].fileDataUrl=row.image_url||null;
+    });
+    if(pDates) pDates.forEach(row=>{
+      const subj=PROGRESS[row.uid]?.[row.domain_id]?.subjects[row.subject_idx];
+      if(subj?.practiceDates) subj.practiceDates[row.date_idx]=row.practice_date||'';
     });
     hideToast(); showToast('データを読み込みました','success');
   } catch(err){ hideToast(); showToast('読み込みエラー: '+err.message,'error'); }
