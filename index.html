@@ -1179,24 +1179,47 @@ function renderReviewDomains(uid){
   const container=document.getElementById("review-domain-list");
   container.innerHTML="";
   DOMAINS.forEach(domain=>{
-    const prog=PROGRESS[uid][domain.id];
+    const prog=PROGRESS[uid]?.[domain.id];
+    if(!prog) return;
     const sec=document.createElement("div");
     sec.style.marginBottom="20px";
+
+    // 血管穿刺（被検者なし・練習日のみ）
+    if(domain.isSimplePractice){
+      const dates=prog.simpleDates||[];
+      const datesHTML=dates.length>0
+        ? dates.map((d,di)=>`
+            <div style="font-size:12px;color:var(--text-muted);padding:4px 0;">
+              練習 ${di+1}：<span style="color:${d?'var(--pass)':'var(--text-dim)'};">${d||'未入力'}</span>
+            </div>`).join("")
+        : `<div style="font-size:12px;color:var(--text-dim);">未入力</div>`;
+      sec.innerHTML=`
+        <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--orange);">${domain.icon} ${domain.name}</div>
+        <div style="padding:8px 0;">${datesHTML}</div>`;
+      container.appendChild(sec);
+      return;
+    }
+
+    // 通常ドメイン（画像あり）
     const tabsHTML=[0,1,2].map(si=>{
-      const name=prog.subjects[si].name||`被検者${si+1}`;
+      const name=prog.subjects[si].name;
+      const label=name ? name.slice(5)||`被検者${si+1}` : `被検者${si+1}`;
       return `<button id="rvtab-${uid}-${domain.id}-${si}"
         class="subject-tab ${si===0?'active':''}"
-        onclick="switchReviewSubject('${uid}','${domain.id}',${si})">${name}</button>`;
+        onclick="switchReviewSubject('${uid}','${domain.id}',${si})">${label}</button>`;
     }).join("");
+
     const panelsHTML=[0,1,2].map(si=>{
       const viewsHTML=domain.views.map(view=>{
         const vs=prog.subjects[si].views[view.id];
+        if(!vs) return '';
         const hasImg=!!vs.fileDataUrl;
         return `
           <div class="rev-img-card" id="rvic-${uid}-${domain.id}-${si}-${view.id}">
             <div class="rev-img-top">
-              ${hasImg?`<img src="${vs.fileDataUrl}" style="width:100%;height:100%;object-fit:cover;">`:
-                `<div style="font-size:10px;color:var(--text-dim);text-align:center;padding:8px;">未提出</div>`}
+              ${hasImg
+                ?`<img src="${vs.fileDataUrl}" style="width:100%;height:100%;object-fit:cover;">`
+                :`<div style="font-size:10px;color:var(--text-dim);text-align:center;padding:8px;">未提出</div>`}
             </div>
             <div class="rev-img-bottom">
               <div style="font-size:11px;font-weight:700;">${view.label}</div>
@@ -1218,6 +1241,7 @@ function renderReviewDomains(uid){
         <div class="rev-img-grid">${viewsHTML}</div>
       </div>`;
     }).join("");
+
     sec.innerHTML=`
       <div style="font-size:13px;font-weight:700;margin-bottom:8px;color:var(--orange);">${domain.icon} ${domain.name}</div>
       <div class="subject-tabs">${tabsHTML}</div>
@@ -1225,6 +1249,7 @@ function renderReviewDomains(uid){
     container.appendChild(sec);
   });
 }
+
 
 function switchReviewSubject(uid,domainId,si){
   [0,1,2].forEach(i=>{
@@ -1509,14 +1534,6 @@ function closeReview(){
 }
 
 
-function switchReviewSubject(uid,domainId,si){
-  [0,1,2].forEach(i=>{
-    const tab=document.getElementById(`rvtab-${uid}-${domainId}-${i}`);
-    const panel=document.getElementById(`rvpanel-${uid}-${domainId}-${i}`);
-    if(tab) tab.classList.toggle("active",i===si);
-    if(panel) panel.classList.toggle("active",i===si);
-  });
-}
 
 
 // ================================================================
