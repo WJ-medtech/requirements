@@ -1059,7 +1059,11 @@ function renderMemberList(){
     const pct=total>0?Math.round(pass/total*100):0;
     const div=document.createElement("div");
     div.className="member-card";
+    div.dataset.uid=m.uid;
     div.onclick=()=>selectMember(m.uid);
+    const loadedBadge=_imagesLoadedFor.has(m.uid)
+      ?'<span style="font-size:9px;color:var(--text-dim);">✓読込済</span>'
+      :'<span style="font-size:9px;color:var(--text-dim);">タップで読込</span>';
     div.innerHTML=`
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
         <div style="width:32px;height:32px;border-radius:50%;background:var(--orange);
@@ -1069,8 +1073,9 @@ function renderMemberList(){
           <div style="font-size:14px;font-weight:700;">${m.name}</div>
           <div style="font-size:11px;color:var(--text-muted);">${m.year}年生</div>
         </div>
-        <div style="margin-left:auto;">
-          ${pass===total?`<span class="done-badge">✓ 全Pass</span>`:`<span class="tag">${pass}/${total} Pass</span>`}
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+          ${loadedBadge}
+          ${pass===total?'<span class="done-badge">✓ 全Pass</span>':`<span class="tag">${pass}/${total} Pass</span>`}
         </div>
       </div>
       <div class="prog-track" style="height:6px;"><div class="prog-fill" style="width:${pct}%"></div></div>`;
@@ -1169,8 +1174,12 @@ function renderMatrix(){
 }
 
 
-function selectMember(uid){
+async function selectMember(uid){
   const member=MEMBERS.find(m=>m.uid===uid);
+  const card=document.querySelector(`[data-uid="${uid}"]`);
+  if(card){ card.style.opacity='0.5'; card.style.pointerEvents='none'; }
+  await loadImagesForMember(uid);
+  if(card){ card.style.opacity=''; card.style.pointerEvents=''; }
   document.getElementById("review-name").textContent=member.name;
   document.getElementById("review-area").style.display="block";
   document.getElementById("member-list").style.display="none";
@@ -1810,19 +1819,6 @@ function showPage(page){
 // REVIEWER PAGE
 // ================================================================
 
-function selectMember(uid){
-  const member=MEMBERS.find(m=>m.uid===uid);
-  document.getElementById("review-name").textContent=member.name;
-  document.getElementById("review-area").style.display="block";
-  document.getElementById("member-list").style.display="none";
-  renderReviewDomains(uid);
-}
-function closeReview(){
-  document.getElementById("review-area").style.display="none";
-  document.getElementById("member-list").style.display="grid";
-  renderMemberList();
-}
-
 
 
 
@@ -1850,7 +1846,13 @@ async function loadFromDB(){
   try {
     const uid=window.CURRENT_UID;
     const role=window.CURRENT_ROLE;
-    let subQ=_supabase.from('submissions').select('*');
+
+    // ── 確認者モード：画像URL(image_url)は除外して軽量読み込み ──
+    // 画像は部員カードをクリックしたときに個別取得する
+    let subQ = role==='reviewer'
+      ? _supabase.from('submissions').select('uid,domain_id,subject_idx,view_id,status,feedback')
+      : _supabase.from('submissions').select('*');
+
     let semQ=_supabase.from('seminar_attendance').select('*');
     let nmQ =_supabase.from('subject_names').select('*');
     let pdQ =_supabase.from('practice_dates').select('*');
@@ -1876,7 +1878,8 @@ async function loadFromDB(){
       if(!subj?.views[row.view_id]) return;
       subj.views[row.view_id].status=row.status;
       subj.views[row.view_id].feedback=row.feedback||'';
-      subj.views[row.view_id].fileDataUrl=row.image_url||null;
+      // 確認者モードは image_url を含まないクエリのため undefined のまま（後で個別取得）
+      if(row.image_url !== undefined) subj.views[row.view_id].fileDataUrl=row.image_url||null;
     });
     if(pDates) pDates.forEach(row=>{
       const d=DOMAINS.find(x=>x.id===row.domain_id);
@@ -1896,6 +1899,34 @@ async function loadFromDB(){
     });
     hideToast(); showToast('データを読み込みました','success');
   } catch(err){ hideToast(); showToast('読み込みエラー: '+err.message,'error'); }
+}
+
+// ================================================================
+// 確認者用：特定部員の画像URLだけを個別取得してPROGRESSに反映
+// ================================================================
+// 一度取得した部員のUIDを記録しておく（2回目以降は再取得しない）
+const _imagesLoadedFor = new Set();
+
+async function loadImagesForMember(uid){
+  if(_imagesLoadedFor.has(uid)) return; // 既に取得済みならスキップ
+  _imagesLoadedFor.add(uid);
+  try {
+    const {data,error}=await _supabase
+      .from('submissions')
+      .select('domain_id,subject_idx,view_id,image_url')
+      .eq('uid',uid);
+    if(error) throw error;
+    if(data) data.forEach(row=>{
+      if(!PROGRESS[uid]?.[row.domain_id]) return;
+      const subj=PROGRESS[uid][row.domain_id].subjects[row.subject_idx];
+      if(!subj?.views[row.view_id]) return;
+      subj.views[row.view_id].fileDataUrl=row.image_url||null;
+    });
+  } catch(e){
+    // 取得失敗してもクラッシュしない。次回クリック時に再試行できるようSetから除外
+    _imagesLoadedFor.delete(uid);
+    console.warn('画像取得失敗:',e);
+  }
 }
 </script>
 </body>
