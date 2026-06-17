@@ -750,6 +750,24 @@ function renderPracticeDatesHTML(domainId, si, dates){
     </div>`;
 }
 
+// 確認者ページ用：練習記録の読み取り専用表示
+function renderPracticeDatesReadonlyHTML(dates){
+  const arr=(dates||[]).filter(d=>d&&d.trim()!=="");
+  if(arr.length===0){
+    return `<div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;">練習記録：未入力</div>`;
+  }
+  const filledBadge=arr.length>=3
+    ?`<span style="background:var(--pass-bg);border:1px solid var(--pass-border);color:var(--pass);font-size:10px;font-weight:700;padding:2px 7px;border-radius:2px;">✓ ${arr.length}回練習済み</span>`
+    :`<span style="background:var(--border);border:1px solid var(--border-light);color:var(--text-muted);font-size:10px;padding:2px 7px;border-radius:2px;">${arr.length}回入力済み</span>`;
+  const datesText=arr.join(" / ");
+  return `
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span style="color:var(--text-dim);">練習記録：</span>
+      <span>${datesText}</span>
+      ${filledBadge}
+    </div>`;
+}
+
 function renderPracticeLogBody(domain, uid){
   const prog=PROGRESS[uid][domain.id];
   return `
@@ -1127,7 +1145,7 @@ function renderMatrix(){
     const prog=PROGRESS[m.uid];
     if(!prog) return;
     bodyRows+=`<tr>`;
-    bodyRows+=`<td class="sticky-col">${m.name}<br><span style="font-size:9px;color:var(--text-dim);">${m.year}年</span></td>`;
+    bodyRows+=`<td class="sticky-col" style="cursor:pointer;" onclick="selectMember('${m.uid}')" title="クリックして画像を確認">${m.name}<br><span style="font-size:9px;color:var(--text-dim);">${m.year}年</span></td>`;
 
     // セミナー
     DOMAINS.forEach(d=>{
@@ -1176,6 +1194,15 @@ function renderMatrix(){
 
 async function selectMember(uid){
   const member=MEMBERS.find(m=>m.uid===uid);
+  // 一覧表（page-matrix）から呼ばれた場合は、確認者ページに切り替えてから表示する
+  const cameFromMatrix = document.getElementById("page-matrix")?.classList.contains("active");
+  if(cameFromMatrix){
+    window._reviewReturnTo = "matrix";
+    document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+    document.getElementById("page-reviewer").classList.add("active");
+  } else {
+    window._reviewReturnTo = null;
+  }
   const card=document.querySelector(`[data-uid="${uid}"]`);
   if(card){ card.style.opacity='0.5'; card.style.pointerEvents='none'; }
   await loadImagesForMember(uid);
@@ -1189,6 +1216,12 @@ function closeReview(){
   document.getElementById("review-area").style.display="none";
   document.getElementById("member-list").style.display="grid";
   renderMemberList();
+  // 一覧表から開いていた場合は一覧表に戻る
+  if(window._reviewReturnTo==="matrix"){
+    window._reviewReturnTo=null;
+    document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+    document.getElementById("page-matrix").classList.add("active");
+  }
 }
 
 function renderReviewDomains(uid){
@@ -1270,7 +1303,9 @@ function renderReviewDomains(uid){
             </div>
           </div>`;
       }).join("");
+      const practiceHTML=renderPracticeDatesReadonlyHTML(prog.subjects[si].practiceDates);
       return `<div id="rvpanel-${uid}-${domain.id}-${si}" class="subject-panel ${si===0?'active':''}">
+        ${practiceHTML}
         <div class="rev-img-grid">${viewsHTML}</div>
       </div>`;
     }).join("");
