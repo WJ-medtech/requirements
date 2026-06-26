@@ -307,8 +307,9 @@ body{background:var(--black);color:var(--text);font-family:"Noto Sans JP",sans-s
       <div style="width:36px;height:36px;border-radius:50%;background:var(--orange);display:flex;align-items:center;justify-content:center;font-family:'Bebas Neue',sans-serif;font-size:17px;color:var(--black);">山</div>
       <div>
         <div style="font-size:15px;font-weight:700;">山田 太郎</div>
-        <div style="font-size:11px;color:var(--text-muted);">5年生 ・ 部員</div>
+        <div id="profile-year-sub" style="font-size:11px;color:var(--text-muted);">5年生 ・ 部員</div>
       </div>
+      <button onclick="editYear()" title="学年を編集" style="margin-left:auto;background:none;border:1px solid var(--border-light);color:var(--text-muted);font-size:11px;padding:4px 10px;border-radius:3px;cursor:pointer;">学年を編集</button>
     </div>
 
     <div id="domain-list"></div>
@@ -522,9 +523,9 @@ function seminarCount(uid){ return DOMAINS.filter(d => PROGRESS[uid]?.[d.id]?.se
 function canEntry(uid){
   if(!PROGRESS[uid]) return false;
   const imagePassed = passCount(uid)===totalViews();
-  const vascularOK = practiceComplete(uid,'vascular');
+  // 血管穿刺の自主練習は受験必須条件から除外（スチューデントドクター限定の自主練習のため）
   const seminarsOK = seminarCount(uid)===DOMAINS.length;
-  return imagePassed && vascularOK && seminarsOK;
+  return imagePassed && seminarsOK;
 }
 function subjectAllPass(uid,domainId,si){
   const d = DOMAINS.find(x=>x.id===domainId);
@@ -571,8 +572,7 @@ function updateProgressBar(){
     hint.style.color="var(--pass)";
   } else {
     btn.disabled=true;
-    const vOK=practiceComplete(uid,'vascular')?"✓":"×";
-    hint.textContent=`🔒 セミナー受講 ${seminarCount(uid)}/${DOMAINS.length}　キー画像Pass ${pass}/${total}　血管穿刺練習 ${vOK}`;
+    hint.textContent=`🔒 セミナー受講 ${seminarCount(uid)}/${DOMAINS.length}　キー画像Pass ${pass}/${total}`;
     hint.style.color="var(--text-dim)";
   }
 }
@@ -591,7 +591,13 @@ function renderDomainList(){
   container.innerHTML="";
   const uid=window.CURRENT_UID;
   if(!uid || !PROGRESS[uid]) return; // 未初期化ガード
-  DOMAINS.forEach((domain,di) => {
+  // 血管穿刺の自主練習はスチューデントドクター（5・6年生）限定。
+  // 部員側で学年5未満（学年未登録含む）の場合はタブ自体を表示しない。
+  const isStudentDoctor = (window.CURRENT_YEAR||0) >= 5;
+  const visibleDomains = (window.CURRENT_ROLE==='member' && !isStudentDoctor)
+    ? DOMAINS.filter(d => d.id!=='vascular')
+    : DOMAINS;
+  visibleDomains.forEach((domain,di) => {
     const prog=PROGRESS[uid][domain.id];
     const card=document.createElement("div");
     card.className="domain-card fade-up";
@@ -1713,6 +1719,7 @@ async function doLogout(){ await _supabase.auth.signOut(); location.reload(); }
 // ================================================================
 window.CURRENT_UID  = null;
 window.CURRENT_ROLE = 'member';
+window.CURRENT_YEAR = null;
 
 // 30分無操作で自動ログアウト
 let _idleTimer;
@@ -1738,6 +1745,7 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     const year = profile?.year || '';
     window.CURRENT_UID  = user.id;
     window.CURRENT_ROLE = role;
+    window.CURRENT_YEAR = year || null;
     document.getElementById('auth-screen').classList.remove('active');
     document.getElementById('nav-reviewer-tab').style.display = role==='reviewer' ? '' : 'none';
     document.getElementById('nav-matrix-tab').style.display = role==='reviewer' ? '' : 'none';
@@ -1775,6 +1783,31 @@ _supabase.auth.onAuthStateChange(async (event, session) => {
     document.getElementById('auth-screen').classList.add('active');
   }
 });
+
+// 学年の編集（スチューデントドクター判定に影響するため、変更後にタブ表示を再描画）
+async function editYear(){
+  const current = window.CURRENT_YEAR || '';
+  const input = prompt('学年を入力してください（1〜6の数字）', current);
+  if(input===null) return; // キャンセル
+  const newYear = parseInt(input);
+  if(isNaN(newYear) || newYear<1 || newYear>6){
+    alert('学年は1〜6の数字で入力してください。');
+    return;
+  }
+  const uid = window.CURRENT_UID;
+  const {error} = await _supabase.from('profiles').update({year:newYear}).eq('id',uid);
+  if(error){
+    alert('学年の更新に失敗しました。通信環境を確認して再度お試しください。');
+    return;
+  }
+  window.CURRENT_YEAR = newYear;
+  const m = MEMBERS.find(x=>x.uid===uid);
+  if(m) m.year = newYear;
+  const subEl = document.getElementById('profile-year-sub');
+  if(subEl) subEl.textContent = `${newYear}年生 ・ ${window.CURRENT_ROLE==='reviewer'?'確認者':'部員'}`;
+  renderDomainList();  // 血管穿刺タブの表示/非表示を即時反映
+  updateProgressBar();
+}
 
 function switchSubject(domainId,si){
   activeSubject[domainId]=si;
